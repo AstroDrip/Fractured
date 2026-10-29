@@ -1,5 +1,30 @@
 # Project Audit
 
+## Pass 5 (2026-10-30): the cutting, creature bodies, vortex in grass and fog
+
+### Baseline before this pass (measured)
+- Local `main` equal to `origin/main` (`0a553da`). `tsc` clean, `npm test` 40 passing,
+  `npm run build` succeeds; autopilot full route completes (179 s simulated with detours).
+
+### What changed
+| Area | Change | Status |
+| --- | --- | --- |
+| World | **The cutting** (z 38–70, west of the line): ramp up off the line, rock shelf under a cliff, a length of track running into the rock, a fallen trunk over a stream cleft (narrow footing: speed capped at 1.5 m/s, arms out), ramp back down. `world/Cutting.ts`, layout `CUTTING`, grid heights per route point, terrain cliff/cleft/embankment. | Implemented |
+| Water | Stream in the cleft (dark, specular, scrolling normal map), waterfall sheet from a crack in the cliff, culvert under the line; flow slows almost to stillness in Void. | Implemented (stylised; no reflections) |
+| Audio | Water voice: own panner + distance low-pass (duller further away), all but silent in Void. New footstep sounds for stone and wood (trunk). | Implemented; **not listened to** |
+| Creatures | Hound, Watcher, Drifters rebuilt from shaped parts (see ART_DIRECTION). Drifters move in beats, not glides. Watcher has a cliff-top spot above the cutting and stands on real terrain height. Behaviour logic unchanged except the pass-4 `search` state. | Implemented (visual) |
+| Wind | The vortex now bends grass locally (shader term around its centre, falls off with distance), lifts swirling mist (ParticleSystem with tangential start directions) and thins scene fog where it is felt. | Implemented |
+| Tests | +4 cutting (connectivity with heights, smooth height, trunk-only crossing, edge safety), +6 creature state tests on NullEngine (Hound wake/sneak/search/repel, Watcher retreat/vanish). **50 passing.** | Implemented |
+
+### Still not done (honest)
+- Industrial region, stronger vertical/fractured sequence, ceiling traversal (no authored ceiling; not claimed).
+- Skinned/rigged protagonist or creatures; IK; production textures.
+- Creature navigation is still the walk grid around the line (no general pathfinding).
+- Audio has not been evaluated by ear; real-time frame rate and physical phones untested (hidden browser pane).
+- Duration: autopilot over every detour **186 s simulated**. First-play duration not measured; far below 15–20 min.
+
+---
+
 ## Pass 4 (2026-10-30): protagonist, gravity surfaces, the village, the vortex
 
 ### Baseline before this pass (measured)

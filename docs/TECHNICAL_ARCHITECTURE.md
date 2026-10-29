@@ -10,6 +10,7 @@
 | Realities | `core/Reality.ts`, `core/PhaseSystem.ts` | bitmasks (`R_NORMAL`, `R_VOID`, `R_DERANGED`); transition state machine |
 | Movement + gravity | `entities/PlayerController.ts` | position, velocity, local up; modes `ground / air / vault / toWall / wall / fromWall`; the active `GravitySurface` frame; `faceInput` maps screen input onto any face orientation |
 | Gravity surfaces | `world/layout.ts` (`GRAVITY_SURFACES`), `world/WalkGrid.ts` (one face grid each) | data per face: frame (origin, normal, u, v), walkable rect, holes, feet, entry region, realities |
+| The cutting | `world/Cutting.ts`, layout `CUTTING` / `cuttingAt`, `WalkGrid.paintCutting`, `Terrain` | shelf, cliff, cleft, trunk bridge (Surface.WOOD → narrow footing in the controller), stream + waterfall, culvert, rails into rock; water voice position |
 | Displaced architecture | `world/Displaced.ts` | house template (merged per house), village, inverted/far repetitions, Void deck + filament outline, ravine rocks, facade with cross-section and Deranged footprints |
 | Wind vortex | `core/Wind.ts` (field), `graphics/VortexDebris.ts` (debris), layout `VORTEX_ROUTES` | travelling eddy on authored routes; bends the shared field; particles with `windResponse` drift with it |
 | Collision data | `world/WalkGrid.ts` | 0.5 m ground grid (reality mask, surface, height, recovery segment), obstacles (circle/box, reality mask, `low` for vaults), wall face grid |

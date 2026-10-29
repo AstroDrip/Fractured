@@ -271,6 +271,13 @@ export class ChapterOne {
         else this.hint('wall-walk', 'A', 'walk into the wall', 0.8);
       }
     }
+    // The cutting
+    if (p.x < -5 && z > 39 && z < 69) {
+      this.say('cutting', 'A path up. Someone wanted to see the line from above.', 0.6);
+      if (p.x < -11 && z > 47 && z < 53) this.say('cut-rails', 'Rails. Up here. Running into the rock.', 0.4);
+      if (z > 53 && z < 59 && p.x < -11) this.say('cut-trunk', 'It will hold. It held before.', 0.2);
+      if (z > 59 && p.x < -11) this.say('cut-water', 'Water. Running the right way, for once.', 0.8);
+    }
     // The village: the same house, more than once
     if (p.x > 9 && z > 127 && z < 146) {
       this.say('village', 'The same house. Again. And again.');

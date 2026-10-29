@@ -1,4 +1,4 @@
-import { Scene, Mesh, MeshBuilder, StandardMaterial, Color3, Vector3, TransformNode, Camera, Frustum } from '@babylonjs/core';
+import { Scene, LinesMesh, Mesh, MeshBuilder, StandardMaterial, Color3, Vector3, TransformNode, Camera, Frustum } from '@babylonjs/core';
 import { ParticleField, FieldContext } from '../graphics/ParticleField';
 import { WalkGrid } from '../world/WalkGrid';
 import { mulberry32, damp, smoothstep } from '../core/rng';
@@ -48,30 +48,54 @@ export class Watcher {
   private alpha = 0;
   private timer = 0;
   private spot = 0;
-  private static readonly SPOTS: [number, number][] = [[-9.5, 31], [-11, 63], [-12.5, 104], [-10, 141], [-8.5, 176]];
+  // Spots it is seen from: the tree line, the cliff top above the cutting, beyond the huts
+  private static readonly SPOTS: [number, number][] = [[-9.5, 31], [-19.5, 63], [-12.5, 104], [-10, 141], [-8.5, 176]];
+  private body!: TransformNode;
+  private neck!: TransformNode;
+  private sway = 0;
 
   constructor(scene: Scene) {
     this.root = new TransformNode('watcher', scene);
     const m = darkMat(scene, 'watcherMat', 0.035);
     m.alpha = 0.999;
-    const part = (w: number, h: number, d: number, x: number, y: number, z: number, rz = 0) => {
-      const b = MeshBuilder.CreateBox('watcherPart', { width: w, height: h, depth: d }, scene);
-      b.parent = this.root; b.position.set(x, y, z); b.rotation.z = rz; b.material = m; b.isPickable = false;
+    // Too tall and too thin: limbs as long tapered cylinders, a narrow head tilted to
+    // one side, arms that hang past the knees. Read as a silhouette, never in detail.
+    const seg = (len: number, r0: number, r1: number, parent: TransformNode, x: number, y: number, z: number, rz = 0, rx = 0) => {
+      const n = new TransformNode('watcherJoint', scene);
+      n.parent = parent; n.position.set(x, y, z); n.rotation.z = rz; n.rotation.x = rx;
+      const b = MeshBuilder.CreateCylinder('watcherPart', { height: len, diameterTop: r0 * 2, diameterBottom: r1 * 2, tessellation: 7 }, scene);
+      b.parent = n; b.position.y = -len / 2; b.material = m; b.isPickable = false;
       this.meshes.push(b);
+      return n;
     };
-    part(0.07, 1.25, 0.08, -0.08, 0.62, 0);  // legs too long for its body
-    part(0.07, 1.25, 0.08, 0.08, 0.62, 0);
-    part(0.24, 0.95, 0.16, 0, 1.7, 0);
-    part(0.05, 1.3, 0.05, -0.17, 1.55, 0, 0.05);  // arms to the knee
-    part(0.05, 1.3, 0.05, 0.17, 1.55, 0, -0.05);
-    part(0.15, 0.24, 0.15, 0, 2.32, 0.02);
+    this.body = new TransformNode('watcherBody', scene);
+    this.body.parent = this.root;
+    for (const side of [-1, 1]) {
+      const hip = seg(0.78, 0.045, 0.035, this.body, side * 0.07, 1.42, 0, side * 0.02);
+      seg(0.72, 0.035, 0.022, hip, 0, -0.78, 0, 0, 0.04);
+    }
+    const torso = MeshBuilder.CreateCylinder('watcherPart', { height: 0.95, diameterTop: 0.2, diameterBottom: 0.13, tessellation: 8 }, scene);
+    torso.parent = this.body; torso.position.y = 1.9; torso.scaling.z = 0.6; torso.material = m; torso.isPickable = false;
+    this.meshes.push(torso);
+    for (const side of [-1, 1]) {
+      const sh = seg(0.72, 0.03, 0.024, this.body, side * 0.12, 2.33, 0, side * 0.06);
+      seg(0.72, 0.024, 0.014, sh, 0, -0.72, 0, -side * 0.03, -0.05);
+    }
+    this.neck = new TransformNode('watcherNeck', scene);
+    this.neck.parent = this.body; this.neck.position.set(0, 2.38, 0.02);
+    const head = MeshBuilder.CreateSphere('watcherPart', { diameter: 0.15, segments: 6 }, scene);
+    head.parent = this.neck; head.position.y = 0.16; head.scaling.set(0.75, 1.6, 0.85); head.material = m; head.isPickable = false;
+    this.meshes.push(head);
     this.place(0);
   }
+
+  /** Ground height under a spot (the cliff top stands well above the line). */
+  public groundAt: (x: number, z: number) => number = () => 0.5;
 
   private place(i: number): void {
     this.spot = i;
     const [x, z] = Watcher.SPOTS[i];
-    this.root.position.set(x, 0.5, z);
+    this.root.position.set(x, this.groundAt(x, z), z);
   }
 
   // Called at most once a second while hidden, so the allocation is acceptable
@@ -126,6 +150,12 @@ export class Watcher {
     // Face the protagonist; in the Void only a trace of it remains
     const dir = c.player.subtract(this.root.position);
     this.root.rotation.y = Math.atan2(dir.x, dir.z);
+    // A slow sway, and the head tilts further the closer it lets you come
+    this.sway += c.dt;
+    this.body.rotation.z = Math.sin(this.sway * 0.4) * 0.03;
+    const d = Math.hypot(dir.x, dir.z);
+    this.neck.rotation.z = 0.32 + smoothstep(40, 14, d) * 0.35;
+    this.neck.rotation.x = 0.12;
     const v = this.alpha * (1 - c.voidAmt * 0.75);
     for (const m of this.meshes) { m.visibility = v; m.isVisible = v > 0.01; }
   }
@@ -135,7 +165,8 @@ export class Watcher {
 
 // --- Flame-sensitive: the Drifters ----------------------------------------
 
-interface Drifter { home: Vector3; centre: Vector3; scattered: number; }
+interface Drifter { home: Vector3; centre: Vector3; scattered: number; core: Mesh; threads: LinesMesh; }
+const DRIFT_BEAT = 1.15;     // seconds per move-and-hold cycle: they go in beats, not glides
 
 /**
  * Small beings of a few dark cubes each, at the edge of the gap. They are drawn
@@ -151,16 +182,28 @@ export class Drifters {
 
   constructor(scene: Scene) {
     const rnd = mulberry32(8080);
+    const coreMat = darkMat(scene, 'drifterMat', 0.022);
+    coreMat.alpha = 0.999;
     for (let i = 0; i < 7; i++) {
       const home = new Vector3((rnd() - 0.5) * 6, 1.2 + rnd() * 1.4, GAP_NEAR_Z - 6 + rnd() * 5.5);
-      this.beings.push({ home, centre: home.clone(), scattered: 0 });
+      // A long dark shard, point down, with threads trailing below it
+      const core = MeshBuilder.CreatePolyhedron('drifterCore', { type: 0, size: 0.13 }, scene);
+      core.scaling.set(0.55, 2.2, 0.55);
+      core.material = coreMat;
+      core.isPickable = false;
+      const lines: Vector3[][] = [];
+      for (let k = 0; k < 3; k++) lines.push([Vector3.Zero(), Vector3.Zero(), Vector3.Zero()]);
+      const threads = MeshBuilder.CreateLineSystem('drifterThreads', { lines, updatable: true }, scene);
+      threads.color = new Color3(0.05, 0.05, 0.06);
+      threads.isPickable = false;
+      this.beings.push({ home, centre: home.clone(), scattered: 0, core, threads });
     }
     for (const seg of CROSSING) {
       if (seg.realities !== 2) continue;
       for (let z = seg.z0 + 1; z < seg.z1 - 0.5; z += 2.2) this.bridgePoints.push(new Vector3((this.bridgePoints.length % 2 ? 1 : -1) * 0.9, BRIDGE_Y + 0.6, z));
     }
     this.field = new ParticleField(scene, {
-      name: 'drifters', capacity: 7 * this.perBeing, blend: 'alpha', life: [0, 0], size: [0.05, 0.11],
+      name: 'drifters', capacity: 7 * this.perBeing, blend: 'alpha', life: [0, 0], size: [0.025, 0.05],
       colorA: [0.03, 0.03, 0.035, 0.9], colorB: [0.03, 0.03, 0.035, 0.9], spin: 3, seed: 81,
       behavior: (f, i, c) => this.step(f, i, c)
     });
@@ -198,11 +241,38 @@ export class Drifters {
         const to = c.firePos.subtract(b.centre); const d = to.length();
         target = d > 1.6 ? b.centre.add(to.scale((d - 1.6) / d)) : b.centre;
       }
-      Vector3.LerpToRef(b.centre, target, damp(0.8, c.dt), b.centre);
+      // Move on the first part of each beat, hold still for the rest
+      const beat = ((c.time + i * 0.37) % DRIFT_BEAT) / DRIFT_BEAT;
+      if (beat < 0.4) Vector3.LerpToRef(b.centre, target, damp(2.2, c.dt), b.centre);
       // Deranged: their positions skip
       if (c.derangedAmt > 0.5 && Math.random() < c.dt * 0.8) b.centre.x += (Math.random() - 0.5) * 1.2;
     }
     this.field.update(fieldCtx);
+    this.present(c);
+  }
+
+  // Cores and threads follow the same visibility rule as the motes around them
+  private present(c: BeingContext): void {
+    for (let i = 0; i < this.beings.length; i++) {
+      const b = this.beings[i];
+      const near = 1 - smoothstep(3, 8, Vector3.Distance(b.centre, c.firePos));
+      const vis = (c.voidAmt > 0.5 ? (c.fireOn ? near : 0) : 1) * (1 - b.scattered);
+      b.core.isVisible = vis > 0.02;
+      b.threads.isVisible = vis > 0.02;
+      if (!b.core.isVisible) continue;
+      b.core.visibility = vis;
+      b.core.position.copyFrom(b.centre);
+      b.core.rotation.y = c.time * 0.4 + i;
+      b.core.rotation.z = Math.sin(c.time * 0.9 + i) * 0.15;
+      const lines: Vector3[][] = [];
+      for (let k = 0; k < 3; k++) {
+        const a = k * 2.1 + i, sway = Math.sin(c.time * 1.7 + k + i) * 0.06;
+        const top = b.centre.add(new Vector3(Math.cos(a) * 0.03, -0.22, Math.sin(a) * 0.03));
+        lines.push([top, top.add(new Vector3(sway, -0.22, -sway * 0.5)), top.add(new Vector3(sway * 2.2, -0.5, -sway))]);
+      }
+      MeshBuilder.CreateLineSystem('drifterThreads', { lines, instance: b.threads });
+      b.threads.alpha = vis * 0.8;
+    }
   }
 
   /** A pulse or ember within reach scatters them. Returns how many scattered. */
@@ -240,8 +310,10 @@ export class Hound {
   private readonly searchAt = new Vector3();
   public readonly pos = HOUND.den.clone();
   private body: TransformNode;
-  private head: Mesh;
-  private legs: Mesh[] = [];
+  private head!: Mesh;
+  private neck!: TransformNode;
+  private headNode!: TransformNode;
+  private limbs: { hip: TransformNode; knee: TransformNode; hind: boolean }[] = [];
   private timer = 0;
   private gait = 0;
   private stuck = 0;
@@ -256,16 +328,47 @@ export class Hound {
     this.body = new TransformNode('houndBody', scene);
     this.body.parent = this.root;
     const m = darkMat(scene, 'houndMat', 0.03);
-    const part = (parent: TransformNode, w: number, h: number, d: number, x: number, y: number, z: number) => {
-      const b = MeshBuilder.CreateBox('houndPart', { width: w, height: h, depth: d }, scene);
-      b.parent = parent; b.position.set(x, y, z); b.material = m; b.isPickable = false;
-      return b;
+    const add = <T extends Mesh>(mesh: T, parent: TransformNode, x: number, y: number, z: number): T => {
+      mesh.parent = parent; mesh.position.set(x, y, z); mesh.material = m; mesh.isPickable = false; return mesh;
     };
-    part(this.body, 0.42, 0.36, 1.35, 0, 0.62, 0);
-    for (let i = 0; i < 5; i++) part(this.body, 0.05, 0.16 + (i % 2) * 0.08, 0.06, 0, 0.86, -0.5 + i * 0.25); // spines
-    this.head = part(this.body, 0.26, 0.24, 0.5, 0, 0.55, 0.85);
-    for (const [x, z] of [[-0.16, 0.45], [0.16, 0.45], [-0.16, -0.5], [0.16, -0.5]]) {
-      this.legs.push(part(this.body, 0.07, 0.6, 0.07, x, 0.3, z));
+    // Torso: long, low, hunched at the shoulders; ribs show along the flank
+    const torso = add(MeshBuilder.CreateCapsule('houndTorso', { height: 1.3, radius: 0.19, tessellation: 10 }, scene), this.body, 0, 0.66, -0.05);
+    torso.rotation.x = Math.PI / 2 - 0.12;
+    torso.scaling.set(1.0, 1.0, 0.85);
+    add(MeshBuilder.CreateSphere('houndHump', { diameter: 0.44, segments: 8 }, scene), this.body, 0, 0.8, 0.38).scaling.set(1, 0.8, 1.2);
+    for (let i = 0; i < 5; i++) {
+      for (const side of [-1, 1]) {
+        const rib = add(MeshBuilder.CreateTorus('houndRib', { diameter: 0.36, thickness: 0.018, tessellation: 10 }, scene), this.body, side * 0.02, 0.66, -0.2 + i * 0.13);
+        rib.rotation.y = Math.PI / 2; rib.scaling.set(1, 1.1, 1);
+      }
+    }
+    // Spines: thin points along the back, tallest over the shoulders
+    for (let i = 0; i < 7; i++) {
+      const h = 0.12 + Math.sin((i / 6) * Math.PI) * 0.14;
+      add(MeshBuilder.CreateCylinder('houndSpine', { height: h, diameterTop: 0, diameterBottom: 0.035, tessellation: 5 }, scene),
+        this.body, 0, 0.88 + h / 2 - 0.04 * Math.abs(i - 4), -0.55 + i * 0.18).rotation.x = -0.35;
+    }
+    // Neck and head: carried low; a long eyeless snout
+    this.neck = new TransformNode('houndNeck', scene);
+    this.neck.parent = this.body; this.neck.position.set(0, 0.72, 0.58);
+    add(MeshBuilder.CreateCapsule('houndNeckM', { height: 0.42, radius: 0.09, tessellation: 8 }, scene), this.neck, 0, -0.04, 0.16).rotation.x = Math.PI / 2 + 0.5;
+    this.headNode = new TransformNode('houndHead', scene);
+    this.headNode.parent = this.neck; this.headNode.position.set(0, -0.16, 0.38);
+    this.head = add(MeshBuilder.CreateCylinder('houndSnout', { height: 0.5, diameterTop: 0.05, diameterBottom: 0.2, tessellation: 8 }, scene), this.headNode, 0, 0, 0.18);
+    this.head.rotation.x = Math.PI / 2 + 0.12;
+    this.head.scaling.set(0.85, 1, 1.25);
+    // Tail: thin, hanging
+    const tail = add(MeshBuilder.CreateCylinder('houndTail', { height: 0.6, diameterTop: 0.01, diameterBottom: 0.05, tessellation: 5 }, scene), this.body, 0, 0.42, -0.98);
+    tail.rotation.x = -2.45;   // hangs down and back
+    // Legs: two segments each; the hind knees bend the other way
+    for (const [x, z, hind] of [[-0.14, 0.42, 0], [0.14, 0.42, 0], [-0.14, -0.52, 1], [0.14, -0.52, 1]] as [number, number, number][]) {
+      const hip = new TransformNode('houndHip', scene);
+      hip.parent = this.body; hip.position.set(x, 0.64, z);
+      add(MeshBuilder.CreateCylinder('houndThigh', { height: 0.34, diameterTop: hind ? 0.17 : 0.12, diameterBottom: 0.07, tessellation: 7 }, scene), hip, 0, -0.17, 0);
+      const knee = new TransformNode('houndKnee', scene);
+      knee.parent = hip; knee.position.y = -0.34;
+      add(MeshBuilder.CreateCylinder('houndShin', { height: 0.34, diameterTop: 0.065, diameterBottom: 0.04, tessellation: 6 }, scene), knee, 0, -0.17, 0);
+      this.limbs.push({ hip, knee, hind: hind === 1 });
     }
     this.root.position.copyFrom(this.pos);
   }
@@ -355,8 +458,21 @@ export class Hound {
     // Presentation: lying low at rest, legs on a gait, head low when stalking
     const resting = this.state === 'rest' ? 1 : 0;
     this.body.position.y += ((resting ? -0.32 : 0) - this.body.position.y) * damp(3, c.dt);
-    this.head.position.y = 0.55 - (this.state === 'stalk' ? 0.12 : 0) + (this.state === 'alert' ? 0.15 : 0);
-    for (let i = 0; i < 4; i++) this.legs[i].rotation.x = Math.sin(this.gait + (i % 2 ? Math.PI : 0) + (i > 1 ? 0.6 : 0)) * 0.5 * (1 - resting);
+    // Head: low and forward when stalking, raised and still when alert, a searching sweep
+    const headTarget = this.state === 'stalk' ? 0.35 : this.state === 'alert' ? -0.25 : this.state === 'search' ? 0.15 : 0.1;
+    this.neck.rotation.x += (headTarget - this.neck.rotation.x) * damp(4, c.dt);
+    this.neck.rotation.y = this.state === 'search' ? Math.sin(this.gait * 0.3 + c.time) * 0.5 : this.neck.rotation.y * 0.95;
+    this.headNode.rotation.x = Math.sin(this.gait * 2) * 0.05 * (1 - resting);
+    // Legs: diagonal pairs; at rest folded under the body
+    for (let i = 0; i < 4; i++) {
+      const l = this.limbs[i];
+      const ph = this.gait + (i === 0 || i === 3 ? 0 : Math.PI);
+      const swing = Math.sin(ph) * 0.42 * (1 - resting);
+      const lift = Math.max(0, Math.cos(ph)) * 0.6 * (1 - resting);
+      const bend = l.hind ? -1 : 1;
+      l.hip.rotation.x = swing - resting * (l.hind ? -1.2 : 1.3);
+      l.knee.rotation.x = bend * (lift + 0.15) + resting * bend * 2.2;
+    }
     // Deranged: it is seen in skips, not in motion
     this.skipTimer -= c.dt;
     if (c.derangedAmt < 0.5 || this.skipTimer <= 0) { this.shownPos.copyFrom(this.pos); this.skipTimer = 0.28; }

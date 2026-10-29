@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from '@babylonjs/core';
-import { WalkGrid } from '../src/world/WalkGrid';
-import { VILLAGE, VILLAGE_ROUTE, GRAVITY_SURFACES, FACADE, BARRIER, VORTEX_ROUTES, ravineDepth } from '../src/world/layout';
+import { WalkGrid, Surface } from '../src/world/WalkGrid';
+import { VILLAGE, VILLAGE_ROUTE, GRAVITY_SURFACES, FACADE, BARRIER, VORTEX_ROUTES, CUTTING, ravineDepth } from '../src/world/layout';
 import { SURFACE_FRAMES, faceInput } from '../src/entities/PlayerController';
 import { Wind } from '../src/core/Wind';
 import type { RealityId } from '../src/core/Reality';
@@ -145,5 +145,41 @@ describe('Wind vortex', () => {
       }
     }
     expect(strongest).toBeGreaterThan(1);
+  });
+});
+
+describe('The cutting', () => {
+  it('climbs from the line to the shelf and comes down again, in Normal', () => {
+    const r = CUTTING.route;
+    const seen = reach(r[0].x, r[0].z, 'normal', 37, 72);
+    for (const p of r) expect(has(seen, p.x, p.z)).toBe(true);
+  });
+
+  it('the shelf is raised and the path height changes smoothly (no step over 0.4 m per cell)', () => {
+    expect(grid.heightAt(-12.6, 50)).toBeGreaterThan(2);
+    let prev = grid.heightAt(CUTTING.route[0].x, CUTTING.route[0].z);
+    for (let i = 0; i < CUTTING.route.length - 1; i++) {
+      const a = CUTTING.route[i], b = CUTTING.route[i + 1];
+      for (let t = 0; t <= 1; t += 0.05) {
+        const h = grid.heightAt(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
+        expect(Math.abs(h - prev)).toBeLessThan(0.4);
+        prev = h;
+      }
+    }
+  });
+
+  it('the trunk is the only way over the cleft, and it is narrow wood', () => {
+    const br = CUTTING.bridge, mid = (br.z0 + br.z1) / 2;
+    expect(grid.surfaceAt(br.x, mid)).toBe(Surface.WOOD);
+    expect(grid.isWalkable(br.x + 0.9, mid, 'normal')).toBe(false);
+    expect(grid.isWalkable(br.x - 0.9, mid, 'normal')).toBe(false);
+    // In no reality is the stream bed walkable
+    for (const r of ['normal', 'void', 'deranged'] as RealityId[]) expect(grid.isWalkable(-18, mid, r)).toBe(false);
+  });
+
+  it('the shelf edge cannot be walked off into the cleft', () => {
+    const seen = reach(-12.6, 50, 'normal', 37, 72);
+    expect(has(seen, -16, 56)).toBe(false);
+    expect(has(seen, -9, 56)).toBe(false);
   });
 });

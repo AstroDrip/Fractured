@@ -1,5 +1,5 @@
 import { Vector2, Vector3 } from '@babylonjs/core';
-import { WalkGrid } from '../world/WalkGrid';
+import { WalkGrid, Surface } from '../world/WalkGrid';
 import { Player } from './Player';
 import { damp } from '../core/rng';
 import { GRAVITY_SURFACES } from '../world/layout';
@@ -21,6 +21,7 @@ const GRAVITY = 12;
 const JUMP_SPEED = 3.6;     // ~0.54 m hop
 const VAULT_TIME = 0.55;
 const WALL_TRANSITION = 0.45;
+const NARROW_SPEED = 1.5;   // m/s on narrow footing
 const WORLD_UP = new Vector3(0, 1, 0);
 const v3 = (a: Vec3) => new Vector3(a[0], a[1], a[2]);
 
@@ -65,6 +66,8 @@ export class PlayerController {
   public readonly vel = new Vector3();
   public readonly up = new Vector3(0, 1, 0);
   public airHeight = 0;
+  /** 0..1 how much the protagonist is balancing (narrow wood underfoot); eases in and out. */
+  public balance = 0;
   public landing = 0;
   public vaultT = 0;
   public wallU = 0;
@@ -110,7 +113,11 @@ export class PlayerController {
   public update(dt: number, input: MoveInput, reality: RealityId, allowed: boolean): void {
     this.landing = Math.max(0, this.landing - dt * 3);
     const mx = allowed ? input.x : 0, my = allowed ? input.y : 0;
-    const speed = !allowed ? 0 : input.run ? this.player.runSpeed : input.slow ? this.player.slowSpeed : this.player.walkSpeed;
+    // Narrow footing (the trunk): never faster than a careful walk
+    const narrow = this.mode === 'ground' && this.grid.surfaceAt(this.pos.x, this.pos.z) === Surface.WOOD;
+    this.balance += ((narrow ? 1 : 0) - this.balance) * damp(5, dt);
+    const base = !allowed ? 0 : input.run ? this.player.runSpeed : input.slow ? this.player.slowSpeed : this.player.walkSpeed;
+    const speed = narrow ? Math.min(base, NARROW_SPEED) : base;
     const f = this.axes.forward, r = this.axes.right;
     const wx = r.x * mx - f.x * my, wz = r.y * mx - f.y * my;
     let walked = 0;

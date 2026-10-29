@@ -2,7 +2,8 @@ import { Scene, Mesh, VertexData, StandardMaterial } from '@babylonjs/core';
 import { fbm2, hash2, smoothstep } from '../core/rng';
 import {
   walkDistance, inGap, GROUND_Y, BED_Y, BED_HALF_WIDTH, TRACK_HALF_WIDTH, TRACK_START_Z,
-  GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, WORLD_END_Z, BURIED_MOUND, PATH, SINKHOLE, segDist, ravineDepth
+  GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, WORLD_END_Z, BURIED_MOUND, PATH, SINKHOLE, segDist, ravineDepth,
+  CUTTING, cuttingAt
 } from './layout';
 
 const NONE = -999;
@@ -39,6 +40,22 @@ export class Terrain {
   private computeHeight(x: number, z: number): number {
     if (inGap(z) || z > WORLD_END_Z) return NONE;
     if (z > SINKHOLE.z0 && z < SINKHOLE.z1 && x > SINKHOLE.x0 && x < SINKHOLE.x1) return NONE;
+    // The cutting: route height on the path, a cliff to the west, a cleft for the stream
+    const cb = CUTTING.bounds;
+    if (x > cb.x0 && x < cb.x1 && z > cb.z0 && z < cb.z1) {
+      const cl = CUTTING.cleft;
+      if (z > cl.z0 && z < cl.z1 && x < cl.x1) return GROUND_Y - cl.depth;
+      const q = cuttingAt(x, z);
+      if (q.d <= CUTTING.radius + 0.5) return Math.round(q.h * 4) / 4;
+      if (x < CUTTING.cliff.x) {
+        // The face: steps up in broken courses to the top
+        const up = Math.min(CUTTING.cliff.top, 2.5 + (CUTTING.cliff.x - x) * 1.6 + hash2(x, z, 41) * 1.2);
+        return Math.round((GROUND_Y + up) * 2) / 2;
+      }
+      // Between the shelf and the line: a rough embankment falling from the shelf
+      const fall = Math.max(0, q.h - GROUND_Y) * Math.max(0, 1 - (q.d - CUTTING.radius) / 6);
+      return Math.round((GROUND_Y + fall) * 2) / 2;
+    }
     // The ravine under the Void-only path: a real drop where no path exists in Normal
     const rav = ravineDepth(x, z);
     if (rav > 0) return Math.round((GROUND_Y - 1.5 - rav * 4) * 4) / 4;

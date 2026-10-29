@@ -238,8 +238,11 @@ export const HUTS: HutDef[] = [
 export const TREES: { x: number; z: number; scale: number; variant: number }[] = [
   { x: -30, z: -10, scale: 1.1, variant: 0 }, { x: -21, z: 6, scale: 1.25, variant: 1 },
   { x: -11, z: 0, scale: 0.9, variant: 2 }, { x: -7, z: 16, scale: 1.0, variant: 0 },
-  { x: 6.5, z: 44, scale: 1.3, variant: 1 }, { x: -6.8, z: 48, scale: 1.4, variant: 2 },
-  { x: 7, z: 54, scale: 1.2, variant: 0 }, { x: -7.5, z: 58, scale: 1.1, variant: 1 },
+  { x: 6.5, z: 44, scale: 1.3, variant: 1 }, { x: -15.4, z: 49, scale: 1.4, variant: 2 },
+  { x: 7, z: 54, scale: 1.2, variant: 0 }, { x: -15.8, z: 61.5, scale: 1.1, variant: 1 },
+  // The shelf under the cliff: a dense stand the path threads through
+  { x: -14.9, z: 44.5, scale: 1.2, variant: 0 }, { x: -17.4, z: 52.4, scale: 1.0, variant: 1 },
+  { x: -15.2, z: 64.5, scale: 1.3, variant: 2 }, { x: -18.0, z: 59.6, scale: 0.9, variant: 0 },
   { x: 6.8, z: 62, scale: 1.35, variant: 2 }, { x: -6.5, z: 140, scale: 1.1, variant: 0 },
   { x: 7.2, z: 160, scale: 1.0, variant: 2 }
 ];
@@ -303,6 +306,9 @@ export function walkDistance(x: number, z: number): number {
       Math.abs(z - GAP_FAR_Z), Math.abs(z - TRACK_END_Z));
     d = Math.min(d, Math.hypot(Math.max(dx, 0), zEdge));
   }
+  // The cutting
+  const cb = CUTTING.bounds;
+  if (x > cb.x0 && x < cb.x1 && z > cb.z0 && z < cb.z1) d = Math.min(d, cuttingAt(x, z).d - CUTTING.radius);
   // The village: square and its paths (the Void spans too, so nothing grows on them)
   const sq = VILLAGE.square;
   d = Math.min(d, Math.hypot(x - sq.x, z - sq.z) - sq.r);
@@ -344,3 +350,44 @@ export const VORTEX_ROUTES: VortexRoute[] = [
   { points: [{ x: -16, z: 38 }, { x: -4, z: 50 }, { x: 3, z: 55 }, { x: 14, z: 66 }], speed: 2.6, radius: 2.2, strength: 1.4, trigger: 30 },
   { points: [{ x: 29, z: 137 }, { x: 20, z: 135.5 }, { x: 14, z: 139.5 }, { x: 5, z: 151 }], speed: 2.2, radius: 2.0, strength: 1.2, trigger: 26 }
 ];
+
+// --- The cutting: forest and cliff west of the line ---------------------------------
+// A ramp climbs off the line at z 40 onto a rock shelf under a cliff, crosses a cleft
+// on a fallen trunk (a narrow walk: slow, arms out), and comes down to the line at z 67.
+// Heights are authored per point; the walk grid and the terrain both read them.
+export interface HPt { x: number; z: number; h: number; }
+export const CUTTING = {
+  route: [
+    { x: -3.0, z: 40.5, h: GROUND_Y }, { x: -8.5, z: 43.2, h: GROUND_Y + 0.75 },
+    { x: -12.2, z: 46.5, h: GROUND_Y + 1.75 }, { x: -12.6, z: 53.4, h: GROUND_Y + 2.0 },
+    { x: -12.6, z: 58.6, h: GROUND_Y + 2.0 }, { x: -12.2, z: 62.0, h: GROUND_Y + 1.75 },
+    { x: -8.5, z: 65.4, h: GROUND_Y + 0.75 }, { x: -3.0, z: 67.6, h: GROUND_Y }
+  ] as HPt[],
+  radius: 1.35,
+  bridge: { z0: 53.4, z1: 58.6, x: -12.6, halfWidth: 0.45 },   // the trunk over the cleft
+  cleft: { z0: 53.9, z1: 58.1, x0: -24, x1: -5.2, depth: 2.6 },  // stream bed below the shelf
+  cliff: { x: -16.5, top: 11 },                                   // the face rises west of here
+  bounds: { x0: -26, x1: -4.2, z0: 37.5, z1: 70.5 },
+  stream: { y: GROUND_Y - 2.15 },
+  waterfall: { x: -21.5, z: 56, top: GROUND_Y + 8.5 },            // a crack in the cliff feeds the stream
+  culvert: { x: -5.6, z: 56 },                                     // the stream goes under the line
+  rails: { x: -14.4, z0: 47.5, z1: 52.6 }                          // a length of track running into the rock
+};
+
+/** The cutting route as segments, for distance and height queries. */
+export function cuttingAt(x: number, z: number): { d: number; h: number } {
+  const r = CUTTING.route;
+  let best = Infinity, bh = GROUND_Y;
+  for (let i = 0; i < r.length - 1; i++) {
+    const a = r[i], b = r[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2));
+    const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+    if (d < best) { best = d; bh = a.h + (b.h - a.h) * t; }
+  }
+  return { d: best, h: bh };
+}
+
+/** True on the trunk bridge (narrow walking). */
+export const onCuttingBridge = (x: number, z: number) =>
+  z > CUTTING.bridge.z0 && z < CUTTING.bridge.z1 && Math.abs(x - CUTTING.bridge.x) <= CUTTING.bridge.halfWidth;

@@ -2,7 +2,7 @@
 
 Coordinates are along the railway (Z, metres). Walk 2.8 m/s, run 4.4, slow 1.35.
 Autopilot completion, measured in fixed 1/60 s steps: **130 s** on the straight line,
-**179 s** taking both new detours (village + Void path, facade). A first playthrough has
+**186 s** taking every detour (cutting, village + Void path, facade). A first playthrough has
 not been measured; it remains below the 15–20 minute target.
 
 | # | Beat | Where | What happens | Player tools | Exit / recovery |
@@ -10,6 +10,7 @@ not been measured; it remains below the 15–20 minute target.
 | 1 | Arrival | start clearing (−25.5, −5.5) → path → line (z 17) | close, low intro camera opens out; fences, the boot (examine); the settlement to the left, one lit window | walk, `[Shift]` run hint at z 18 | reach the rails |
 | 2 | The light | vantage z 19–30 | camera lowers and turns down the line; the moving light sits far ahead among the trees; its tone is audible first | — | walk on |
 | 3 | The fire | z 44 | "My palm is warm." `[F]`; "It does not burn me."; `[R]` gather hint | flame, pulse, ember | — |
+| 3b | The cutting (optional) | ramp off the line at z 40, back at z 67 | a shelf under a cliff; rails running into the rock; a fallen trunk over a stream (slow, arms out); the stream is heard before it is seen; the Watcher can stand on the cliff top | walk (narrow footing) | back to the line at z 67 |
 | 4 | First obstacle | fallen pole z 86 | "A pole came down across the line." `[Space]` | vault | land at z 86.8 |
 | 5 | Monumental reveal | z 98 | real dolly back and around; the floating landmass, inverted village, sideways river; protagonist small in the foreground; walking away hands control back early | — | shot ends ~12 s |
 | 6 | Huts, poles | z 72–147 | the same hut twice; poles compress; the grounded cable; sleeper pile vault at z 121.6; the Watcher keeps ahead at the tree line | vault, examine | — |

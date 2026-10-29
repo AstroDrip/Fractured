@@ -2,13 +2,14 @@ import { Vector3 } from '@babylonjs/core';
 import {
   PATH, PATH_RADIUS, START, START_CLEARING_RADIUS, TRACK_HALF_WIDTH, BED_HALF_WIDTH,
   TRACK_START_Z, GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, CROSSING, BARRIER, SINKHOLE, WALL, VAULTS,
-  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE
+  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE,
+  CUTTING, cuttingAt, onCuttingBridge
 } from './layout';
 import type { Pt, GravitySurface } from './layout';
 import { R_ALL, realityBit } from '../core/Reality';
 import type { RealityId } from '../core/Reality';
 
-export enum Surface { NONE = 0, SOIL = 1, GRAVEL = 2, PHASE = 3, STONE = 4 }
+export enum Surface { NONE = 0, SOIL = 1, GRAVEL = 2, PHASE = 3, STONE = 4, WOOD = 5 }
 
 export interface Obstacle {
   kind: 'circle' | 'box';
@@ -52,6 +53,7 @@ export class WalkGrid {
     this.segment = new Uint8Array(n);
     this.paintChapter();
     this.paintVillage();
+    this.paintCutting();
     for (const sf of GRAVITY_SURFACES) this.paintFace(sf);
   }
 
@@ -154,6 +156,25 @@ export class WalkGrid {
       const hw = (turned ? h.d : h.w) / 2, hd = (turned ? h.w : h.d) / 2;
       this.obstacles.push({ kind: 'box', x: 0, z: 0, r: 0, x0: h.x - hw, z0: h.z - hd, x1: h.x + hw, z1: h.z + hd, realities: h.realities });
     }
+  }
+
+  /** The cutting: a corridor whose height follows the authored route; the trunk is narrow. */
+  private paintCutting(): void {
+    const b = CUTTING.bounds, c = CUTTING.cleft;
+    this.forCells(b.x0, b.z0, b.x1 + 1.2, b.z1, (k, x, z) => {
+      const overCleft = z > c.z0 - 0.5 && z < c.z1 + 0.5 && x < c.x1;
+      if (overCleft) {
+        if (!onCuttingBridge(x, z)) return;
+        this.flags[k] = R_ALL; this.surface[k] = Surface.WOOD;
+        this.height[k] = cuttingAt(x, z).h + 0.15;   // the top of the trunk
+        return;
+      }
+      const q = cuttingAt(x, z);
+      if (q.d > CUTTING.radius) return;
+      const wasTrack = this.flags[k] !== 0;
+      this.flags[k] = R_ALL;
+      if (!wasTrack) { this.surface[k] = q.h > GROUND_Y + 1 ? Surface.STONE : Surface.SOIL; this.height[k] = q.h; }
+    });
   }
 
   private paintFace(sf: GravitySurface): void {

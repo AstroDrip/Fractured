@@ -8,6 +8,7 @@ import { PhaseGeometry } from './PhaseGeometry';
 import { Anomalies } from './Anomalies';
 import { Structures } from './Structures';
 import { Displaced } from './Displaced';
+import { Cutting } from './Cutting';
 import { Vista } from './Vista';
 import { MovingLight } from './MovingLight';
 import { FogLayer } from '../graphics/FogLayer';
@@ -26,6 +27,7 @@ export class World {
   public props!: Props;
   public structures!: Structures;
   public displaced!: Displaced;
+  public cutting!: Cutting;
   public vista!: Vista;
   public light!: MovingLight;
   public phaseGeom!: PhaseGeometry;
@@ -49,6 +51,7 @@ export class World {
       { label: 'placing what was left behind', run: () => { this.props = new Props(this.scene, this.mats, this.terrain, this.grid); this.props.build(); } },
       { label: 'raising the wall', run: () => { this.structures = new Structures(this.scene, this.mats); this.structures.build(); } },
       { label: 'the houses that moved', run: () => { this.displaced = new Displaced(this.scene, this.mats); this.displaced.build(); } },
+      { label: 'the cutting', run: () => { this.cutting = new Cutting(this.scene, this.mats); this.cutting.build(); } },
       { label: 'the distance', run: () => { this.vista = new Vista(this.scene); this.light = new MovingLight(this.scene); } },
       { label: 'the other configurations', run: () => {
         this.phaseGeom = new PhaseGeometry(this.scene, this.props.treeVariants[2]);
@@ -57,6 +60,8 @@ export class World {
       } },
       { label: 'what lives here', run: () => {
         this.watcher = new Watcher(this.scene);
+        this.watcher.groundAt = (x, z) => { const h = this.terrain.heightAt(x, z); return h > -100 ? h : 0.5; };
+        this.watcher.reset();
         this.drifters = new Drifters(this.scene);
         this.hound = new Hound(this.scene, this.grid);
         this.attachRealityFX();
@@ -81,7 +86,7 @@ export class World {
   }
 
   public shadowCasters(): AbstractMesh[] {
-    return [...this.railway.shadowCasters, ...this.props.shadowCasters, ...this.structures.shadowCasters, ...this.displaced.shadowCasters];
+    return [...this.railway.shadowCasters, ...this.props.shadowCasters, ...this.structures.shadowCasters, ...this.displaced.shadowCasters, ...this.cutting.shadowCasters];
   }
 
   public shadowReceivers(): Mesh[] {

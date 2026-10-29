@@ -227,7 +227,8 @@ export class Game {
     this.player.onFootstep = (_foot, intensity) => {
       const p = this.ctrl.pos;
       const s = this.ctrl.onWall ? Surface.STONE : this.world.grid.surfaceAt(p.x, p.z);
-      const surf: FootSurface = s === Surface.GRAVEL ? 'gravel' : s === Surface.PHASE ? 'phase' : 'soil';
+      const surf: FootSurface = s === Surface.GRAVEL ? 'gravel' : s === Surface.PHASE ? 'phase'
+        : s === Surface.STONE ? 'stone' : s === Surface.WOOD ? 'wood' : 'soil';
       this.audio.footstep(surf, intensity);
     };
   }
@@ -477,7 +478,7 @@ export class Game {
       fire: this.fire.strength, charge: this.fire.charge, phase: this.phase.progress,
       inspecting: story.inspecting, lookAt: story.lookAt,
       recovering: Math.min(1, this.recover.stumble) + (this.recover.active ? 1 : 0),
-      airborne: c.airborne, landing: c.landing, vault: c.mode === 'vault' ? c.vaultT : 0,
+      airborne: c.airborne, landing: c.landing, vault: c.mode === 'vault' ? c.vaultT : 0, balance: c.balance,
       wind: this.clothWind.set(this.wind.dirX, 0, this.wind.dirZ).scaleInPlace(this.wind.strength * (1 + this.wind.gust))
     });
     this.player.palm.computeWorldMatrix(true);
@@ -520,6 +521,7 @@ export class Game {
       if (this.houndStepTimer <= 0) { this.houndStepTimer = 0.18; this.audio.houndRun(this.panOf(w.hound.pos)); }
     }
     w.displaced.update(dt, this.voidAmt, this.derangedAmt);
+    w.cutting.update(dt, this.voidAmt);
     w.structures.wallFootprints.visibility = this.derangedAmt * 0.95;
     w.structures.wallFootprints.isVisible = this.derangedAmt > 0.02;
 
@@ -547,6 +549,8 @@ export class Game {
     RealityFX.fireRadius = this.fire.isPresent ? (3.2 + this.fire.charge * 2.5) * (0.5 + 0.5 * this.fire.fuel) : 0;
     RealityFX.windX = this.wind.dirX; RealityFX.windZ = this.wind.dirZ;
     RealityFX.windStrength = this.wind.strength; RealityFX.gust = this.wind.gust;
+    const vx = this.wind.vortex;
+    RealityFX.vortexX = vx.x; RealityFX.vortexZ = vx.z; RealityFX.vortexRadius = vx.radius; RealityFX.vortexStrength = vx.strength;
 
     // Camera, air, post, sound
     this.cam.targetPosition.copyFrom(c.pos);
@@ -554,7 +558,11 @@ export class Game {
     if (this.state !== 'ending') this.cam.setDistance(c.pos.z > 170 && c.pos.z < 212 ? this.cam.baseDistance + 3 : this.cam.onWallDistance(c.onWall, this.cam.baseDistance));
     const vant = vantageAt(c.pos.z);
     // Off the line (the village) the square has its own framing, from the side where no house stands
-    if (c.pos.x > TRACK_HALF_WIDTH + 2 && !c.onWall && this.state !== 'ending') {
+    const inCutting = c.pos.x < -(TRACK_HALF_WIDTH + 1.5) && c.pos.z > 38 && c.pos.z < 70;
+    if (inCutting && this.state !== 'ending') {
+      // The cutting: the ordinary view, so the cliff stands behind the protagonist
+      this.cam.setVantage(0, 0.72, 17, 0, dt);
+    } else if (c.pos.x > TRACK_HALF_WIDTH + 2 && !c.onWall && this.state !== 'ending') {
       const vv = VILLAGE.vantage;
       this.cam.setVantage(1, vv.pitch, vv.distance, vv.yaw, dt);
     } else {
@@ -562,12 +570,18 @@ export class Game {
     }
     this.cam.update(dt, c.vel, story.focus, story.focusWeight, this.phase.progress + this.phase.strain * 0.3);
     this.atmos.update(c.pos, this.voidAmt, this.derangedAmt);
+    // A passing vortex pulls the fog thin around the protagonist for a moment
+    this.scene.fogDensity *= 1 - this.wind.vortexFelt * 0.3;
     this.updateFireScreenPos();
     this.post.update(dt, this.fireUV, this.fire.strength * (0.5 + this.fire.charge));
     this.audio.update(dt, {
       wind: this.atmos.wind + this.wind.vortexFelt * 0.8, space: this.atmos.space, phase: this.phase.progress,
       fire: this.fire.strength, charge: this.fire.charge, voidAmt: this.voidAmt, deranged: this.derangedAmt
     });
+    // The stream: placed and muffled by distance; in Void it all but stops
+    const wv = w.cutting.waterVoice;
+    const dw = Vector3.Distance(wv, c.pos);
+    this.audio.setWaterVoice(Math.max(0, 1 - dw / 26) * (1 - this.voidAmt * 0.85), this.panOf(wv), Math.min(1, dw / 20));
     const lp = w.light.position;
     const dl = Vector3.Distance(lp, c.pos);
     this.audio.setLightVoice(w.light.visible * Math.min(1, 40 / Math.max(dl, 1)) * (this.state === 'ending' ? 2 : 1), this.panOf(lp));

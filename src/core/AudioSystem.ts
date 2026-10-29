@@ -1,4 +1,4 @@
-export type FootSurface = 'soil' | 'gravel' | 'phase';
+export type FootSurface = 'soil' | 'gravel' | 'phase' | 'stone' | 'wood';
 
 export interface AudioFrame {
   wind: number;      // 0..1 zone wind amount
@@ -78,6 +78,7 @@ export class AudioSystem {
       this.startWind();
       this.startFireLoop();
       this.startLightVoice();
+      this.startWater();
     } catch (e) {
       console.warn('Audio unavailable; continuing without sound', e);
       this.ctx = null;
@@ -150,6 +151,37 @@ export class AudioSystem {
     send.gain.value = 0.9;
     this.lightPan.connect(send).connect(this.spaceIn);
     lfo.start();
+  }
+
+  // Running water: low filtered noise with a slow swell, its own panner and a distance
+  // filter, so it is heard from where the stream is and duller further away
+  private waterGain!: GainNode;
+  private waterPan!: StereoPannerNode;
+  private waterLow!: BiquadFilterNode;
+  private startWater(): void {
+    const ctx = this.ctx!;
+    const src = this.noiseSource(true);
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass'; bp.frequency.value = 520; bp.Q.value = 0.5;
+    this.waterLow = ctx.createBiquadFilter();
+    this.waterLow.type = 'lowpass'; this.waterLow.frequency.value = 2400;
+    this.waterGain = ctx.createGain(); this.waterGain.gain.value = 0;
+    this.waterPan = ctx.createStereoPanner();
+    const lfo = ctx.createOscillator(); lfo.frequency.value = 0.21;
+    const lfoAmt = ctx.createGain(); lfoAmt.gain.value = 140;
+    lfo.connect(lfoAmt).connect(bp.frequency);
+    src.connect(bp).connect(this.waterLow).connect(this.waterGain).connect(this.waterPan).connect(this.ambBus);
+    lfo.start();
+    src.start(0, 0.3);
+  }
+
+  /** gain 0..1, pan -1..1, far 0..1 (0 = beside it, 1 = far: muffled). */
+  public setWaterVoice(gain: number, pan: number, far: number): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    this.waterGain.gain.setTargetAtTime(0.09 * gain, now, 0.5);
+    this.waterPan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), now, 0.3);
+    this.waterLow.frequency.setTargetAtTime(2600 - far * 2100, now, 0.4);
   }
 
   /** gain 0..1 (by distance and visibility), pan -1..1 (direction relative to the camera). */
@@ -264,6 +296,14 @@ export class AudioSystem {
       this.burst('bandpass', 3800, 1.2, 0.05 * v, 0.05, pan, 0, 0.025);
     } else if (surface === 'soil') {
       this.burst('lowpass', 650 + Math.random() * 200, 0.7, 0.16 * v, 0.12, pan, send * 0.6);
+    } else if (surface === 'stone') {
+      // Hard, short: a click on top of a low knock
+      this.burst('bandpass', 1500 + Math.random() * 400, 1.6, 0.1 * v, 0.035, pan, send);
+      this.burst('lowpass', 300, 0.8, 0.08 * v, 0.06, pan, send * 0.5);
+    } else if (surface === 'wood') {
+      // Hollow: the trunk answers each step with a short low tone
+      this.tone('sine', 150 + Math.random() * 25, 120, 0.05 * v, 0.005, 0.16, pan, send);
+      this.burst('lowpass', 900, 0.9, 0.07 * v, 0.05, pan, send * 0.4);
     } else {
       // On phase ground the step is a soft, slightly wrong tone
       this.tone('sine', 640 + Math.random() * 40, 600, 0.035 * v, 0.005, 0.25, pan, send);

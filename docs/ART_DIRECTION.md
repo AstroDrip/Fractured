@@ -44,6 +44,16 @@ Standard tone mapping, cool shadows / warm highlights, −8 saturation, vignette
 grain, restrained bloom (threshold 0.62). No permanent distortion; one radial split from
 the flame when phasing.
 
-## Known art debt
-Blocky procedural forms throughout; no authored textures, models or rig; the protagonist
-is a box figure; Void edge cells can read as confetti when realities oscillate (finale).
+## Known art debt (as of pass 5, 2026-10-30)
+- Everything is procedural geometry built in code: no authored textures, imported models
+  or skinned rigs. No asset-generation tool was available.
+- Protagonist: an articulated procedural figure (shaped limbs, lathed torso, hood shell,
+  open coat panels) on a transform hierarchy. Reads as a hooded, slender figure at the
+  play distance; up close the joints are visibly simple shapes. Not a production character.
+- Creatures: rebuilt from shaped parts (pass 5): the Hound (hunched torso, ribs, spines,
+  eyeless snout, two-joint legs), the Watcher (over-long tapered limbs, tilted narrow
+  head), Drifters (dark shard cores with trailing threads). Still primitive up close.
+- Terrain is a voxel heightfield: the cutting's cliff reads as stepped courses, not rock.
+- Void edge cells can read as confetti when realities oscillate (finale).
+- Water exists only in the cutting's stream and fall (scrolling normal map, alpha sheet);
+  no reflections beyond the specular highlight.

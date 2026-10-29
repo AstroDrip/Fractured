@@ -1,6 +1,8 @@
 # Test Plan and Results
 
-## Automated (`npm test`, Vitest) — 40 tests, all passing
+## Automated (`npm test`, Vitest) — 50 tests, all passing
+- `tests/creatures.test.ts` (Babylon NullEngine, no GPU): Hound wakes on running and stalks; a slow walker with the hand closed passes; it loses a protagonist above reach on a face, searches, returns; a pulse repels it. Watcher retreats when approached (never closes distance) and vanishes on a phase transition.
+- `tests/regions.test.ts` (cutting): route connected in Normal including heights; height changes < 0.4 m per sample along the route; the trunk is the only crossing and is wood; the shelf edge cannot be walked off.
 - `tests/regions.test.ts`: village loop connectivity in Normal; the Void path reaches past the fallen tree only in Void (Normal cannot); Void-span recovery points are solid; the ravine lies under the Void path and never under real ground; only the absent house gives way in Void; per-surface face grids (facade band blocked, passage beneath open, white wall unchanged); end-to-end facade traversal below the break; surface entry regions; screen-to-face input for walls and ceilings (direction and speed); the vortex starts near its route, circulates tangentially and is not felt far away.
 - `tests/input.test.ts`: flame tap dedupe, configurable interval, fade timing; stick direction normalised with separate magnitude; touch hold-to-phase edges; keyboard + touch phase held together; one-shot presses; blur releases touch; releases never switch a keyboard player to touch; a key press returns to keyboard.
 - `tests/phase.test.ts`: enter/leave; refused without flame; commit rejected when the incoming reality cannot hold the protagonist; held when leaving is unsafe and required; lock until key release; target fixed mid-transition.

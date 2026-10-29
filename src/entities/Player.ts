@@ -12,6 +12,7 @@ export interface PlayerPoseInput {
   airborne: number;    // 0..1 in a jump
   landing: number;     // 0..1 landing impulse, scaled by fall
   vault: number;       // 0..1 progress through a vault, 0 when not vaulting
+  balance?: number;    // 0..1 narrow footing: arms out, body low and still
   /** World-space wind acting on loose cloth (direction × strength, gusts included). */
   wind?: Vector3;
 }
@@ -297,7 +298,7 @@ export class Player {
     }
 
     const breath = Math.sin(this.time * 1.7);
-    const crouch = pose.charge * 0.06 + pose.recovering * 0.14 + pose.phase * 0.02 + pose.landing * 0.22
+    const crouch = pose.charge * 0.06 + pose.recovering * 0.14 + pose.phase * 0.02 + pose.landing * 0.22 + (pose.balance ?? 0) * 0.07
       + Math.sin(pose.vault * Math.PI) * 0.18;
 
     // Hips: bob on each step (deeper when running), sway, idle weight shift
@@ -340,12 +341,15 @@ export class Player {
       if (i === 1) {
         const hold = fireLift;
         arm.upper.rotation.x = swing * (1 - hold) - hold * (0.95 + pose.charge * 0.35) + breath * 0.01;
-        arm.upper.rotation.z = -0.07 - pose.phase * 0.25;
+        arm.upper.rotation.z = -0.07 - pose.phase * 0.25 - (pose.balance ?? 0) * (1 - hold) * (0.95 - Math.sin(this.time * 2.3) * 0.12);
         arm.fore.rotation.x = -hold * (0.75 - pose.charge * 0.35) - (0.12 + run * 0.5) * (1 - hold) * Math.min(1, w);
       } else {
         // The free hand reaches down to the obstacle during a vault, out for balance in the air
-        arm.upper.rotation.x = swing + pose.recovering * -0.6 - pose.charge * 0.25 - Math.sin(pose.vault * Math.PI) * 0.9;
-        arm.upper.rotation.z = 0.07 + pose.phase * 0.3 + pose.recovering * 0.4 + pose.airborne * 0.35;
+        // and on narrow footing
+        const bal = pose.balance ?? 0;
+        arm.upper.rotation.x = swing * (1 - bal * 0.7) + pose.recovering * -0.6 - pose.charge * 0.25 - Math.sin(pose.vault * Math.PI) * 0.9;
+        arm.upper.rotation.z = 0.07 + pose.phase * 0.3 + pose.recovering * 0.4 + pose.airborne * 0.35
+          + bal * (0.95 + Math.sin(this.time * 2.3) * 0.12);
         arm.fore.rotation.x = -0.15 - (0.18 + run * 0.5) * Math.min(1, w) - pose.charge * 0.3;
       }
     }
