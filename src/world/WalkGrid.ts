@@ -2,9 +2,9 @@ import { Vector3 } from '@babylonjs/core';
 import {
   PATH, PATH_RADIUS, START, START_CLEARING_RADIUS, TRACK_HALF_WIDTH, BED_HALF_WIDTH,
   TRACK_START_Z, GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, CROSSING, BARRIER, SINKHOLE, WALL, VAULTS,
-  GROUND_Y, BED_Y, BRIDGE_Y, segDist
+  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE
 } from './layout';
-import type { Pt } from './layout';
+import type { Pt, GravitySurface } from './layout';
 import { R_ALL, realityBit } from '../core/Reality';
 import type { RealityId } from '../core/Reality';
 
@@ -39,10 +39,8 @@ export class WalkGrid {
   public obstacles: Obstacle[] = [];
   public readonly radius = 0.22;
 
-  // Wall face grid: u along Z, v up the face from the ground
-  private wallW: number;
-  private wallH: number;
-  private wallMask: Uint8Array;
+  // One face grid per gravity surface: u along the face, v up it from its foot
+  private faces: { s: GravitySurface; w: number; h: number; mask: Uint8Array }[] = [];
 
   constructor() {
     this.w = Math.ceil(64 / this.res);
@@ -52,11 +50,9 @@ export class WalkGrid {
     this.surface = new Uint8Array(n);
     this.height = new Float32Array(n).fill(GROUND_Y);
     this.segment = new Uint8Array(n);
-    this.wallW = Math.ceil((WALL.z1 - WALL.z0) / this.res);
-    this.wallH = Math.ceil(WALL.height / this.res);
-    this.wallMask = new Uint8Array(this.wallW * this.wallH);
     this.paintChapter();
-    this.paintWall();
+    this.paintVillage();
+    for (const sf of GRAVITY_SURFACES) this.paintFace(sf);
   }
 
   private idx(x: number, z: number): number {
@@ -105,6 +101,11 @@ export class WalkGrid {
       });
     }
 
+    // Ground at the facade's foot (the shoulder widened up to the house front)
+    this.forCells(FACADE.ground.x0, FACADE.z0, FACADE.ground.x1, FACADE.z1, (k) => {
+      this.flags[k] = R_ALL; this.surface[k] = Surface.STONE; this.height[k] = GROUND_Y;
+    });
+
     // Crossing segments are OR-ed in, so their overlaps exist in every reality either side allows
     for (const seg of CROSSING) {
       this.forCells(-seg.halfWidth, seg.z0, seg.halfWidth, seg.z1, (k) => {
@@ -128,16 +129,45 @@ export class WalkGrid {
     }
   }
 
-  private paintWall(): void {
-    const { walk, hole } = WALL;
-    for (let j = 0; j < this.wallH; j++) {
-      for (let i = 0; i < this.wallW; i++) {
-        const u = WALL.z0 + (i + 0.5) * this.res, v = (j + 0.5) * this.res;
-        const onFace = u > walk.u0 && u < walk.u1 && v < walk.v1;
-        const inHole = u > hole.u0 && u < hole.u1 && v < hole.v1;
-        this.wallMask[j * this.wallW + i] = onFace && !inHole ? 1 : 0;
+  /** The village square, its paths and the Void-only spans across the ravine. */
+  private paintVillage(): void {
+    const sq = VILLAGE.square;
+    this.forCells(sq.x - sq.r, sq.z - sq.r, sq.x + sq.r, sq.z + sq.r, (k, x, z) => {
+      if (Math.hypot(x - sq.x, z - sq.z) <= sq.r) { this.flags[k] |= R_ALL; this.surface[k] = Surface.SOIL; }
+    });
+    for (const p of VILLAGE_ROUTE) {
+      const x0 = Math.min(p.a.x, p.b.x) - p.r, x1 = Math.max(p.a.x, p.b.x) + p.r;
+      const z0 = Math.min(p.a.z, p.b.z) - p.r, z1 = Math.max(p.a.z, p.b.z) + p.r;
+      this.forCells(x0, z0, x1, z1, (k, x, z) => {
+        if (segDist(x, z, p.a, p.b) > p.r) return;
+        const wasEmpty = this.flags[k] === 0;
+        this.flags[k] |= p.realities;
+        if (wasEmpty) {
+          this.surface[k] = p.realities === R_ALL ? Surface.SOIL : Surface.PHASE;
+          if (p.realities !== R_ALL) { this.height[k] = BRIDGE_Y; this.segment[k] = p.id; }
+        }
+      });
+    }
+    // The houses are solid wherever they exist
+    for (const h of VILLAGE.houses) {
+      const turned = Math.abs(Math.sin(h.yaw)) > 0.5;
+      const hw = (turned ? h.d : h.w) / 2, hd = (turned ? h.w : h.d) / 2;
+      this.obstacles.push({ kind: 'box', x: 0, z: 0, r: 0, x0: h.x - hw, z0: h.z - hd, x1: h.x + hw, z1: h.z + hd, realities: h.realities });
+    }
+  }
+
+  private paintFace(sf: GravitySurface): void {
+    const w = Math.ceil((sf.u1 - sf.u0) / this.res), h = Math.ceil(sf.height / this.res);
+    const mask = new Uint8Array(w * h);
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const u = sf.u0 + (i + 0.5) * this.res, v = (j + 0.5) * this.res;
+        const onFace = u > sf.walk.u0 && u < sf.walk.u1 && v < sf.walk.v1;
+        const inHole = sf.holes.some(o => u > o.u0 && u < o.u1 && v > o.v0 && v < o.v1);
+        mask[j * w + i] = onFace && !inHole ? 1 : 0;
       }
     }
+    this.faces[sf.id] = { s: sf, w, h, mask };
   }
 
   public addCircle(x: number, z: number, r: number): void {
@@ -171,7 +201,7 @@ export class WalkGrid {
   }
 
   public recoveryFor(segmentId: number): Pt {
-    const seg = CROSSING.find(s => s.id === segmentId);
+    const seg = CROSSING.find(s => s.id === segmentId) ?? VILLAGE_ROUTE.find(s => s.id === segmentId);
     return seg ? seg.recovery : BARRIER.recovery;
   }
 
@@ -238,27 +268,39 @@ export class WalkGrid {
     return null;
   }
 
-  // --- Wall face ------------------------------------------------------------
+  // --- Gravity surfaces --------------------------------------------------------
 
-  public wallWalkable(u: number, v: number): boolean {
-    const i = Math.floor((u - WALL.z0) / this.res), j = Math.floor(v / this.res);
-    if (v < 0) return true; // stepping off the bottom edge is handled by the controller
-    if (i < 0 || j < 0 || i >= this.wallW || j >= this.wallH) return false;
-    return this.wallMask[j * this.wallW + i] === 1;
+  /** The surface whose entry region contains this ground point, if any. */
+  public surfaceEntryAt(x: number, z: number): GravitySurface | null {
+    for (const f of this.faces) {
+      const e = f.s.entry;
+      if (x >= e.x0 && x <= e.x1 && z >= e.z0 && z <= e.z1) return f.s;
+    }
+    return null;
   }
 
-  /** Axis-separated move on the wall face. Mutates next (x = u, y = v). */
-  public resolveWall(prevU: number, prevV: number, next: { u: number; v: number }): void {
+  public wallWalkable(u: number, v: number, surface = 0): boolean {
+    const f = this.faces[surface];
+    if (!f) return false;
+    const i = Math.floor((u - f.s.u0) / this.res), j = Math.floor(v / this.res);
+    if (v < 0) return true; // stepping off the bottom edge is handled by the controller
+    if (i < 0 || j < 0 || i >= f.w || j >= f.h) return false;
+    return f.mask[j * f.w + i] === 1;
+  }
+
+  /** Axis-separated move on a face. Mutates next. */
+  public resolveWall(prevU: number, prevV: number, next: { u: number; v: number }, surface = 0): void {
     const r = this.radius;
     const free = (u: number, v: number) =>
-      this.wallWalkable(u - r, v + r) && this.wallWalkable(u + r, v + r) &&
-      this.wallWalkable(u - r, Math.max(0, v - r) + 0.01) && this.wallWalkable(u + r, Math.max(0, v - r) + 0.01);
+      this.wallWalkable(u - r, v + r, surface) && this.wallWalkable(u + r, v + r, surface) &&
+      this.wallWalkable(u - r, Math.max(0, v - r) + 0.01, surface) && this.wallWalkable(u + r, Math.max(0, v - r) + 0.01, surface);
     if (!free(next.u, prevV)) next.u = prevU;
     if (!free(next.u, next.v)) next.v = prevV;
   }
 
-  /** Ground exists at the wall's foot at this point along the wall. */
-  public wallFootHasGround(u: number): boolean {
-    return WALL.baseZ.some(([z0, z1]) => u > z0 + 0.3 && u < z1 - 0.3);
+  /** Ground exists at the face's foot at this point along it. */
+  public wallFootHasGround(u: number, surface = 0): boolean {
+    const f = this.faces[surface];
+    return !!f && f.s.feet.some(([z0, z1]) => u > z0 + 0.3 && u < z1 - 0.3);
   }
 }

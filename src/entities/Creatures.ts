@@ -16,6 +16,8 @@ export interface BeingContext {
   voidAmt: number;
   derangedAmt: number;
   transitioning: boolean;    // a phase transition is under way
+  /** Height above the ground while on a gravity surface (0 on the ground): out of reach above ~1.2 m. */
+  playerHeight: number;
   camera: Camera;
 }
 
@@ -220,7 +222,8 @@ export class Drifters {
 
 // --- Pursuer: the Hound -----------------------------------------------------
 
-type HoundState = 'rest' | 'alert' | 'stalk' | 'pursue' | 'repelled' | 'return';
+type HoundState = 'rest' | 'alert' | 'stalk' | 'pursue' | 'search' | 'repelled' | 'return';
+const HOUND_REACH_HEIGHT = 1.2;   // the protagonist is out of reach above this on a face
 
 export const HOUND = { den: new Vector3(-2.4, 0.5, 274), zMin: 247, zMax: 292, checkpoint: { x: 0, z: 245.5 } };
 
@@ -234,6 +237,7 @@ export const HOUND = { den: new Vector3(-2.4, 0.5, 274), zMin: 247, zMax: 292, c
 export class Hound {
   public root: TransformNode;
   public state: HoundState = 'rest';
+  private readonly searchAt = new Vector3();
   public readonly pos = HOUND.den.clone();
   private body: TransformNode;
   private head: Mesh;
@@ -269,7 +273,7 @@ export class Hound {
   private stimulus(c: BeingContext): boolean {
     const d = Vector3.Distance(c.player, this.pos);
     const inTerritory = c.player.z > HOUND.zMin && c.player.z < HOUND.zMax;
-    if (!inTerritory) return false;
+    if (!inTerritory || c.playerHeight > HOUND_REACH_HEIGHT) return false;
     const reach = this.state === 'rest' ? 11 : 17;
     return d < reach && (c.playerSpeed > 3.3 || (c.fireOn && d < 13) || (c.transitioning && d < 20));
   }
@@ -300,17 +304,27 @@ export class Hound {
     stalk: (dt, c) => {
       this.timer += dt;
       this.moveToward(c.player, 1.2, dt);
+      if (c.playerHeight > HOUND_REACH_HEIGHT) { this.timer = 0; return 'search'; }
       if (this.stimulus(c) && this.timer > 2.5) return 'pursue';
       if (this.timer > 5) return 'return';
       return null;
     },
     pursue: (dt, c) => {
       this.timer += dt;
+      if (c.playerHeight > HOUND_REACH_HEIGHT) { this.timer = 0; return 'search'; }
       this.moveToward(c.player, 4.1, dt);
       if (Vector3.Distance(c.player, this.pos) < 0.95) { if (this.onCatch) this.onCatch(); return 'return'; }
       const left = c.player.z < HOUND.zMin || c.player.z > HOUND.zMax;
       if (this.timer > 6.5 || left) return 'return';
       return null;
+    },
+    // Lost its quarry overhead: pace beneath where it was, then give up
+    search: (dt, c) => {
+      this.timer += dt;
+      this.searchAt.set(Math.max(-3.2, Math.min(3.2, c.player.x)), this.pos.y, c.player.z);
+      this.moveToward(this.searchAt, 1.4, dt);
+      if (c.playerHeight <= HOUND_REACH_HEIGHT && this.stimulus(c)) { this.timer = 0; return 'pursue'; }
+      return this.timer > 4.5 ? 'return' : null;
     },
     repelled: (dt) => {
       this.timer += dt;

@@ -3,6 +3,7 @@
 // runs along +Z at X = 0. Ground surface is at GROUND_Y.
 
 import { R_NORMAL, R_VOID, R_DERANGED } from '../core/Reality';
+const R_ALL_LAYOUT = R_NORMAL | R_VOID | R_DERANGED;
 import type { RealityId } from '../core/Reality';
 
 export const GROUND_Y = 0.5;
@@ -105,6 +106,74 @@ export const WALL = {
   hole: { u0: 225.5, u1: 234.5, v1: 4.6 },          // the broken section: no face below v1
   baseZ: [[216, 222], [238, 244]] as [number, number][]  // ground at the wall's foot either side of the sinkhole
 };
+
+// --- Gravity surfaces ---------------------------------------------------------
+// Faces whose gravity turns toward them in Deranged. Each has its own frame: origin
+// is the point at u = 0, v = 0; `normal` becomes the protagonist's up; u and v are
+// the face's own axes. The controller, the walk grid, the camera and the animation
+// all read the same surface, so no face needs code of its own.
+export type Vec3 = [number, number, number];
+export interface FaceRect { u0: number; u1: number; v0: number; v1: number; }
+export interface GravitySurface {
+  id: number;
+  name: string;
+  origin: Vec3; normal: Vec3; uAxis: Vec3; vAxis: Vec3;
+  u0: number; u1: number; height: number;          // extent of the face grid
+  walk: { u0: number; u1: number; v1: number };    // walkable part of the face
+  holes: FaceRect[];                               // missing face
+  feet: [number, number][];                        // u ranges with ground at the foot
+  entry: { x0: number; x1: number; z0: number; z1: number };  // where walking into it starts the turn
+  realities: number;
+}
+// A displaced house front standing beside the line in the Hound's stretch: walkable
+// above the den in Deranged, with a broken window band to work around
+export const FACADE = { x: -5.6, z0: 255.5, z1: 282.5, height: 9, ground: { x0: -5.4, x1: -3.5 } };
+export const GRAVITY_SURFACES: GravitySurface[] = [
+  {
+    id: 0, name: 'white wall',
+    origin: [WALL.x, GROUND_Y, 0], normal: [1, 0, 0], uAxis: [0, 0, 1], vAxis: [0, 1, 0],
+    u0: WALL.z0, u1: WALL.z1, height: WALL.height, walk: WALL.walk,
+    holes: [{ u0: WALL.hole.u0, u1: WALL.hole.u1, v0: 0, v1: WALL.hole.v1 }],
+    feet: WALL.baseZ,
+    entry: { x0: WALL.x, x1: WALL.x + 0.8, z0: WALL.z0, z1: WALL.z1 },
+    realities: R_DERANGED
+  },
+  {
+    id: 1, name: 'facade',
+    origin: [FACADE.x, GROUND_Y, 0], normal: [1, 0, 0], uAxis: [0, 0, 1], vAxis: [0, 1, 0],
+    u0: FACADE.z0, u1: FACADE.z1, height: FACADE.height, walk: { u0: 256.3, u1: 281.7, v1: 6.6 },
+    holes: [{ u0: 267.6, u1: 270.6, v0: 3.0, v1: 6.6 }],
+    feet: [[FACADE.z0, FACADE.z1]],
+    entry: { x0: FACADE.x, x1: FACADE.x + 0.9, z0: FACADE.z0 + 0.5, z1: FACADE.z1 - 0.5 },
+    realities: R_DERANGED
+  }
+];
+
+// --- The displaced village ------------------------------------------------------
+// A loop east of the track between the second vault and the fallen tree: a square
+// of houses that do not agree with each other. From its far corner a path that
+// exists only in Void crosses a ravine and rejoins the line beyond the fallen tree.
+export interface RoutePiece { a: Pt; b: Pt; r: number; realities: number; id: number; recovery: Pt; }
+export const VILLAGE = {
+  square: { x: 16, z: 136, r: 6.5 },
+  // The square is framed from the south-west, so the houses stand beyond the protagonist
+  vantage: { pitch: 0.62, distance: 18, yaw: -Math.PI / 2 },
+  houses: [
+    { x: 21.5, z: 133, yaw: -Math.PI / 2, w: 4.6, d: 5.2, h: 3.0, realities: R_NORMAL | R_VOID | R_DERANGED },  // door to the square
+    { x: 20.5, z: 141.5, yaw: Math.PI, w: 4.6, d: 5.2, h: 3.0, realities: R_NORMAL | R_DERANGED },          // the same house; gone in Void, its shadow stays
+    { x: 22.8, z: 128.8, yaw: Math.PI / 2, w: 4.6, d: 5.2, h: 3.0, realities: R_NORMAL | R_VOID | R_DERANGED }       // the same house again, its door turned away from everything
+  ],
+  inverted: { x: 15, z: 136, y: 13.5 },           // the same house, hanging upside down over the square
+  far: { x: 44, z: 168 },                          // and once more, out in the fog where nothing can be reached
+  ravine: { a: { x: 13.5, z: 143 }, b: { x: 4.6, z: 156.5 }, r: 2.4 }
+};
+export const VILLAGE_ROUTE: RoutePiece[] = [
+  { a: { x: 3.2, z: 126.5 }, b: { x: 11.5, z: 131.5 }, r: 1.4, realities: R_ALL_LAYOUT, id: 0, recovery: { x: 0, z: 126 } },
+  { a: { x: 12, z: 141.5 }, b: { x: 3.2, z: 146.2 }, r: 1.4, realities: R_ALL_LAYOUT, id: 0, recovery: { x: 0, z: 146 } },
+  // Only in Void: two spans over the ravine to the line past the fallen tree
+  { a: { x: 13.6, z: 142.6 }, b: { x: 9.2, z: 149.5 }, r: 0.95, realities: R_VOID, id: 11, recovery: { x: 14.2, z: 141.4 } },
+  { a: { x: 9.2, z: 149.5 }, b: { x: 3.4, z: 157.2 }, r: 0.95, realities: R_VOID, id: 12, recovery: { x: 0, z: 157.5 } }
+];
 
 // --- Narrative zones (atmosphere + ambience blend along Z) ------------------
 
@@ -234,6 +303,10 @@ export function walkDistance(x: number, z: number): number {
       Math.abs(z - GAP_FAR_Z), Math.abs(z - TRACK_END_Z));
     d = Math.min(d, Math.hypot(Math.max(dx, 0), zEdge));
   }
+  // The village: square and its paths (the Void spans too, so nothing grows on them)
+  const sq = VILLAGE.square;
+  d = Math.min(d, Math.hypot(x - sq.x, z - sq.z) - sq.r);
+  for (const p of VILLAGE_ROUTE) d = Math.min(d, segDist(x, z, p.a, p.b) - p.r);
   // Path capsules
   for (let i = 0; i < PATH.length - 1; i++) {
     d = Math.min(d, segDist(x, z, PATH[i], PATH[i + 1]) - PATH_RADIUS);
@@ -250,3 +323,24 @@ export function segDist(x: number, z: number, a: Pt, b: Pt): number {
 
 export const inGap = (z: number) => z > GAP_NEAR_Z && z < GAP_FAR_Z;
 export const isTrackZ = (z: number) => (z >= TRACK_START_Z - 30 && z <= GAP_NEAR_Z) || (z >= GAP_FAR_Z && z <= TRACK_END_Z);
+
+/** 0..1 depth of the ravine the Void spans cross (0 outside it, and never under real ground). */
+export function ravineDepth(x: number, z: number): number {
+  const rv = VILLAGE.ravine;
+  const d = segDist(x, z, rv.a, rv.b);
+  if (d >= rv.r || Math.abs(x) < TRACK_HALF_WIDTH + 0.6) return 0;
+  const sq = VILLAGE.square;
+  if (Math.hypot(x - sq.x, z - sq.z) < sq.r + 0.8) return 0;
+  for (const p of VILLAGE_ROUTE) if (p.realities === R_ALL_LAYOUT && segDist(x, z, p.a, p.b) < p.r + 0.8) return 0;
+  return 1 - d / rv.r;
+}
+
+// --- Wind vortices ---------------------------------------------------------------
+// An anomalous eddy crosses these routes now and then while the protagonist is near.
+// It is one coherent event: the shared wind field bends around it, so grass gusts,
+// the coat, the flame and loose debris all answer the same passing thing.
+export interface VortexRoute { points: Pt[]; speed: number; radius: number; strength: number; trigger: number; }
+export const VORTEX_ROUTES: VortexRoute[] = [
+  { points: [{ x: -16, z: 38 }, { x: -4, z: 50 }, { x: 3, z: 55 }, { x: 14, z: 66 }], speed: 2.6, radius: 2.2, strength: 1.4, trigger: 30 },
+  { points: [{ x: 29, z: 137 }, { x: 20, z: 135.5 }, { x: 14, z: 139.5 }, { x: 5, z: 151 }], speed: 2.2, radius: 2.0, strength: 1.2, trigger: 26 }
+];

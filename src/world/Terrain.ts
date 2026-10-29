@@ -2,7 +2,7 @@ import { Scene, Mesh, VertexData, StandardMaterial } from '@babylonjs/core';
 import { fbm2, hash2, smoothstep } from '../core/rng';
 import {
   walkDistance, inGap, GROUND_Y, BED_Y, BED_HALF_WIDTH, TRACK_HALF_WIDTH, TRACK_START_Z,
-  GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, WORLD_END_Z, BURIED_MOUND, PATH, SINKHOLE, segDist
+  GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, WORLD_END_Z, BURIED_MOUND, PATH, SINKHOLE, segDist, ravineDepth
 } from './layout';
 
 const NONE = -999;
@@ -39,6 +39,9 @@ export class Terrain {
   private computeHeight(x: number, z: number): number {
     if (inGap(z) || z > WORLD_END_Z) return NONE;
     if (z > SINKHOLE.z0 && z < SINKHOLE.z1 && x > SINKHOLE.x0 && x < SINKHOLE.x1) return NONE;
+    // The ravine under the Void-only path: a real drop where no path exists in Normal
+    const rav = ravineDepth(x, z);
+    if (rav > 0) return Math.round((GROUND_Y - 1.5 - rav * 4) * 4) / 4;
     const d = walkDistance(x, z);
     const onTrackZ = (z >= TRACK_START_Z && z <= GAP_NEAR_Z) || (z >= GAP_FAR_Z && z <= TRACK_END_Z + 4);
     if (d <= 0.75) {

@@ -80,7 +80,8 @@ src/graphics/         palm fire, particles, reality/wind material plugin, atmosp
                       post-processing, abyss fog
 src/ui/               HUD, touch controls
 src/dev/harness.ts    dev-only play-testing harness (window.H)
-tests/                Vitest: phase state machine, walk grid, route connectivity, input/touch
+tests/                Vitest: phase state machine, walk grid, route connectivity, input/touch,
+                      village/Void path, gravity surfaces, wind vortex
 docs/                 audit, architecture, art direction, world bible, walkthrough,
                       asset manifest, performance, test plan
 ```

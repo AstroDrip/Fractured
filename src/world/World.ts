@@ -7,6 +7,7 @@ import { Props } from './Props';
 import { PhaseGeometry } from './PhaseGeometry';
 import { Anomalies } from './Anomalies';
 import { Structures } from './Structures';
+import { Displaced } from './Displaced';
 import { Vista } from './Vista';
 import { MovingLight } from './MovingLight';
 import { FogLayer } from '../graphics/FogLayer';
@@ -24,6 +25,7 @@ export class World {
   public railway!: Railway;
   public props!: Props;
   public structures!: Structures;
+  public displaced!: Displaced;
   public vista!: Vista;
   public light!: MovingLight;
   public phaseGeom!: PhaseGeometry;
@@ -46,6 +48,7 @@ export class World {
       { label: 'laying the railway', run: () => { this.railway = new Railway(this.scene, this.mats); this.railway.build(); } },
       { label: 'placing what was left behind', run: () => { this.props = new Props(this.scene, this.mats, this.terrain, this.grid); this.props.build(); } },
       { label: 'raising the wall', run: () => { this.structures = new Structures(this.scene, this.mats); this.structures.build(); } },
+      { label: 'the houses that moved', run: () => { this.displaced = new Displaced(this.scene, this.mats); this.displaced.build(); } },
       { label: 'the distance', run: () => { this.vista = new Vista(this.scene); this.light = new MovingLight(this.scene); } },
       { label: 'the other configurations', run: () => {
         this.phaseGeom = new PhaseGeometry(this.scene, this.props.treeVariants[2]);
@@ -68,7 +71,8 @@ export class World {
     const m = this.mats;
     const world: [StandardMaterial, number][] = [
       [m.ground, 0], [m.timber, 0], [m.rust, 0], [m.metalDark, 0], [m.bark, 0.025], [m.stone, 0],
-      [m.concrete, 0], [m.grass, 0.9], [m.signPlate, 0], [m.puddle, 0], [this.structures.whiteStone, 0]
+      [m.concrete, 0], [m.grass, 0.9], [m.signPlate, 0], [m.puddle, 0], [this.structures.whiteStone, 0],
+      [this.displaced.plaster, 0]
     ];
     for (const [mat, sway] of world) new RealityPlugin(mat, sway);
     // The far silhouettes keep their own aerial perspective so the end of the line reads
@@ -77,7 +81,7 @@ export class World {
   }
 
   public shadowCasters(): AbstractMesh[] {
-    return [...this.railway.shadowCasters, ...this.props.shadowCasters, ...this.structures.shadowCasters];
+    return [...this.railway.shadowCasters, ...this.props.shadowCasters, ...this.structures.shadowCasters, ...this.displaced.shadowCasters];
   }
 
   public shadowReceivers(): Mesh[] {
@@ -85,6 +89,6 @@ export class World {
   }
 
   public occluders(): Mesh[] {
-    return [...this.structures.occluders, ...this.props.huts];
+    return [...this.structures.occluders, ...this.props.huts, ...this.displaced.occluders];
   }
 }

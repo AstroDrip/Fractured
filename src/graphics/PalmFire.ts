@@ -131,7 +131,7 @@ export class PalmFire {
       name: 'fireEmbers', capacity: 180, blend: 'add', life: [0.55, 1.4], size: [0.02, 0.05],
       colorA: [1.0, 0.74, 0.32, 1], colorB: [0.95, 0.3, 0.08, 0.6], fadeIn: 0.08, fadeOut: 0.45,
       drag: 1.6, gravity: 0.55, noise: { amp: 0.9, freq: 3.2, speed: 1.4 },
-      contradict: { rate: 0.5, duration: 0.22 }, spin: 7, seed: 8
+      contradict: { rate: 0.5, duration: 0.22 }, spin: 7, seed: 8, windResponse: 2.2
     });
 
     // Negative particles: dark fragments that obscure rather than emit
@@ -139,7 +139,7 @@ export class PalmFire {
       name: 'fireAsh', capacity: 70, blend: 'alpha', life: [1.4, 3.0], size: [0.014, 0.04],
       colorA: [0.015, 0.014, 0.016, 0.0], colorB: [0.01, 0.01, 0.012, 0.75], fadeIn: 0.3, fadeOut: 0.3,
       drag: 1.2, gravity: 0.18, noise: { amp: 0.5, freq: 1.6, speed: 0.6 },
-      fire: { radius: 1.2, strength: -0.6 }, spin: 1.5, seed: 9
+      fire: { radius: 1.2, strength: -0.6 }, spin: 1.5, seed: 9, windResponse: 1.4
     });
 
     for (let i = 0; i < PalmFire.FILAMENTS; i++) {
@@ -312,9 +312,12 @@ export class PalmFire {
     const tilt = s * 3.1;
     const ox = Math.cos(a) * r, oz = Math.sin(a) * r;
     const oy = Math.sin(a * 0.7 + tilt) * r * 0.6 + 0.04 + (s - 0.5) * 0.06;
-    f.px[i] = ctx.fire.x + ox * Math.cos(tilt) - oy * Math.sin(tilt) * 0.3;
+    // The flame leans with the wind: outer fragments are carried further than inner ones
+    const lean = ctx.wind ? r * 0.55 : 0;
+    const lx = ctx.wind ? ctx.wind.x * lean : 0, lz = ctx.wind ? ctx.wind.z * lean : 0;
+    f.px[i] = ctx.fire.x + ox * Math.cos(tilt) - oy * Math.sin(tilt) * 0.3 + lx;
     f.py[i] = ctx.fire.y + oy;
-    f.pz[i] = ctx.fire.z + oz;
+    f.pz[i] = ctx.fire.z + oz + lz;
     f.vx[i] = f.vy[i] = f.vz[i] = 0;
     f.alphaMul[i] = this.strength;
   }

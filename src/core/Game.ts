@@ -21,9 +21,10 @@ import { ChapterOne } from '../world/ChapterOne';
 import { Surface } from '../world/WalkGrid';
 import { InteractionHUD } from '../ui/InteractionHUD';
 import { TouchControls } from '../ui/TouchControls';
+import { VortexDebris } from '../graphics/VortexDebris';
 import { FlameTapCharger } from './FlameTapCharger';
 import { TOUCH } from './controls';
-import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, phaseTargetAt, vantageAt } from '../world/layout';
+import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, TRACK_HALF_WIDTH, VILLAGE, phaseTargetAt, vantageAt } from '../world/layout';
 
 const MAX_LIGHTS_PER_MATERIAL = 6;   // sky, moon, palm fire, thrown ember, lamp
 const STEP = 1 / 60;          // fixed simulation step
@@ -43,8 +44,6 @@ const nextFrame = () => new Promise<void>(r => setTimeout(r, 16));
  * camera -> atmosphere -> post -> audio. Rendering happens once per display frame.
  */
 export class Game {
-  private static readonly WORLD_UP = new Vector3(0, 1, 0);
-  private static readonly WALL_UP = new Vector3(1, 0, 0);   // the wall face looks toward +X
   public state: GameState = 'loading';
   private canvas: HTMLCanvasElement;
   private engine!: Engine;
@@ -63,13 +62,15 @@ export class Game {
   private atmos!: Atmosphere;
   private post!: PostFX;
   private chapter!: ChapterOne;
-  private ctx: FieldContext = { time: 0, dt: 0, fire: new Vector3(), fireStrength: 0, phase: 0, player: new Vector3() };
+  private ctx: FieldContext = { time: 0, dt: 0, fire: new Vector3(), fireStrength: 0, phase: 0, player: new Vector3(), wind: new Vector3() };
+  private debris!: VortexDebris;
   private beingCtx!: BeingContext;
   private time = 0;
   private acc = 0;
   private recover = { active: false, t: 0, target: new Vector3(), segment: 0, stumble: 0, reason: 'fall' as 'fall' | 'caught' };
   private ending = { t: 0, cut: false };
   private readonly palmPos = new Vector3();
+  private readonly clothWind = new Vector3();
   private readonly fireUV = new Vector2(0.5, 0.5);
   private readonly projected = new Vector3();
   private readonly anchorBuf: Vector3[] = [];
@@ -132,13 +133,14 @@ export class Game {
     this.player = new Player(this.scene, this.world.mats);
     this.ctrl = new PlayerController(this.world.grid, this.player, this.cam);
     this.fire = new PalmFire(this.scene);
+    this.debris = new VortexDebris(this.scene, this.wind.vortex);
     this.chapter = new ChapterOne(this.hud, this.audio);
     this.post = new PostFX(this.scene, this.cam.camera);
     this.cam.setOccluders(this.world.occluders());
     this.atmos.setShadowCasters([...this.world.shadowCasters(), ...this.player.meshes]);
     this.beingCtx = {
       dt: 0, time: 0, player: this.ctrl.pos, playerSpeed: 0, fireOn: false, firePos: this.fire.position,
-      reality: 'normal', voidAmt: 0, derangedAmt: 0, transitioning: false, camera: this.cam.camera
+      reality: 'normal', voidAmt: 0, derangedAmt: 0, transitioning: false, camera: this.cam.camera, playerHeight: 0
     };
     const shadowsReady = this.applyQuality(this.settings.data.quality);
     this.wireEvents();
@@ -238,6 +240,7 @@ export class Game {
     const shadowSize = this.mobile ? (q === 'high' ? 1024 : 0) : (q === 'high' ? 2048 : q === 'medium' ? 1024 : 0);
     const shadowsReady = this.atmos.setShadowQuality(shadowSize as 0 | 1024 | 2048);
     this.fire.setQuality(level);
+    this.debris.setQuality(level);
     this.world.anomalies.setQuality(level);
     this.world.phaseGeom.residue.setQuality(0.4 + level * 0.6);
     this.world.fog.setQuality(level);
@@ -338,6 +341,7 @@ export class Game {
     this.recover.active = false;
     this.recover.stumble = 0;
     this.ending.t = 0; this.ending.cut = false;
+    this.debris.clear();
     this.tapCharger.reset();
     this.touch.releaseAll();
     this.voidAmt = 0; this.derangedAmt = 0;
@@ -473,7 +477,8 @@ export class Game {
       fire: this.fire.strength, charge: this.fire.charge, phase: this.phase.progress,
       inspecting: story.inspecting, lookAt: story.lookAt,
       recovering: Math.min(1, this.recover.stumble) + (this.recover.active ? 1 : 0),
-      airborne: c.airborne, landing: c.landing, vault: c.mode === 'vault' ? c.vaultT : 0
+      airborne: c.airborne, landing: c.landing, vault: c.mode === 'vault' ? c.vaultT : 0,
+      wind: this.clothWind.set(this.wind.dirX, 0, this.wind.dirZ).scaleInPlace(this.wind.strength * (1 + this.wind.gust))
     });
     this.player.palm.computeWorldMatrix(true);
     this.palmPos.copyFrom(this.player.palm.getAbsolutePosition());
@@ -485,8 +490,10 @@ export class Game {
     this.ctx.player.copyFrom(c.pos);
     this.fire.phaseTint = this.phase.progress;
     this.fire.feet.copyFrom(c.pos);
-    this.fire.surfaceUp.copyFrom(c.onWall ? Game.WALL_UP : Game.WORLD_UP);
+    this.fire.surfaceUp.copyFrom(c.up);
+    this.ctx.wind!.copyFrom(this.clothWind);
     this.fire.update(dt, this.palmPos, this.ctx);
+    this.debris.update(this.ctx);
     const report = w.anomalies.update(this.ctx, this.voidAmt, this.derangedAmt);
     this.fire.resonance += (report.resonance - this.fire.resonance) * damp(4, dt);
     this.lastAnomalyFocus = report.focus;
@@ -504,6 +511,7 @@ export class Game {
     bc.dt = dt; bc.time = this.time; bc.playerSpeed = this.recover.active ? 0 : speed; bc.fireOn = this.fire.isPresent;
     bc.reality = reality; bc.voidAmt = this.voidAmt; bc.derangedAmt = this.derangedAmt;
     bc.transitioning = this.phase.state === 'entering' || this.phase.state === 'leaving';
+    bc.playerHeight = c.onWall ? c.wallV : 0;
     w.watcher.update(bc);
     w.drifters.update(bc, this.ctx);
     w.hound.update(bc);
@@ -511,6 +519,7 @@ export class Game {
       this.houndStepTimer -= dt;
       if (this.houndStepTimer <= 0) { this.houndStepTimer = 0.18; this.audio.houndRun(this.panOf(w.hound.pos)); }
     }
+    w.displaced.update(dt, this.voidAmt, this.derangedAmt);
     w.structures.wallFootprints.visibility = this.derangedAmt * 0.95;
     w.structures.wallFootprints.isVisible = this.derangedAmt > 0.02;
 
@@ -544,13 +553,19 @@ export class Game {
     this.cam.advanceIntro(dt, speed > 0.3);
     if (this.state !== 'ending') this.cam.setDistance(c.pos.z > 170 && c.pos.z < 212 ? this.cam.baseDistance + 3 : this.cam.onWallDistance(c.onWall, this.cam.baseDistance));
     const vant = vantageAt(c.pos.z);
-    this.cam.setVantage(c.onWall || this.state === 'ending' ? 0 : vant.w, vant.v?.pitch ?? 0.72, vant.v?.distance ?? 17, vant.v?.yaw ?? 0, dt);
+    // Off the line (the village) the square has its own framing, from the side where no house stands
+    if (c.pos.x > TRACK_HALF_WIDTH + 2 && !c.onWall && this.state !== 'ending') {
+      const vv = VILLAGE.vantage;
+      this.cam.setVantage(1, vv.pitch, vv.distance, vv.yaw, dt);
+    } else {
+      this.cam.setVantage(c.onWall || this.state === 'ending' ? 0 : vant.w, vant.v?.pitch ?? 0.72, vant.v?.distance ?? 17, vant.v?.yaw ?? 0, dt);
+    }
     this.cam.update(dt, c.vel, story.focus, story.focusWeight, this.phase.progress + this.phase.strain * 0.3);
     this.atmos.update(c.pos, this.voidAmt, this.derangedAmt);
     this.updateFireScreenPos();
     this.post.update(dt, this.fireUV, this.fire.strength * (0.5 + this.fire.charge));
     this.audio.update(dt, {
-      wind: this.atmos.wind, space: this.atmos.space, phase: this.phase.progress,
+      wind: this.atmos.wind + this.wind.vortexFelt * 0.8, space: this.atmos.space, phase: this.phase.progress,
       fire: this.fire.strength, charge: this.fire.charge, voidAmt: this.voidAmt, deranged: this.derangedAmt
     });
     const lp = w.light.position;

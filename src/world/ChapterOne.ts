@@ -271,8 +271,22 @@ export class ChapterOne {
         else this.hint('wall-walk', 'A', 'walk into the wall', 0.8);
       }
     }
+    // The village: the same house, more than once
+    if (p.x > 9 && z > 127 && z < 146) {
+      this.say('village', 'The same house. Again. And again.');
+      if (p.x > 12) this.say('village-up', 'Do not look up for too long.', 4.0);
+      if (s.reality === 'void' && p.x > 11) this.say('village-shadow', 'It left. Its shadow did not.', 0.6);
+      if (s.reality !== 'void' && p.x > 11 && z > 139) this.hint('village-void', 'Q', 'hold to phase', 3.0, () => !this.said.has('village-path'));
+    }
+    if (s.reality === 'void' && p.x > 5 && z > 143 && z < 157) this.say('village-path', 'There was a way across. There was always a way across.');
     // The hound
     if (z > 252 && s.houndState === 'rest') this.say('hound-seen', 'Something is lying on the line.');
+    // The house front beside the den
+    if (z > 256 && z < 282 && p.x < -3.6) {
+      this.say('facade', 'Only the front of a house. Nothing behind it.', 0.4);
+      if (s.reality === 'deranged') this.hint('facade-walk', 'A', 'walk into the wall', 0.8);
+    }
+    if (s.onWall && z > 256 && z < 282) this.say('facade-above', 'It cannot reach me up here. It is waiting.', 1.2);
 
     // Points of interest
     this.currentPoi = null;

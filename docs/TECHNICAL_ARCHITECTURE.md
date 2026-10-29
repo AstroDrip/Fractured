@@ -8,9 +8,12 @@
 | Touch | `ui/TouchControls.ts`, `core/FlameTapCharger.ts` | touch pointers only (ownership per pointer id): floating stick, hold-to-phase, flame tap/long-press, climb, look, world tap, pause; tap dedupe/fade — see [MOBILE_AND_DEPLOYMENT.md](MOBILE_AND_DEPLOYMENT.md) |
 | Viewport | `core/Game.ts` (`setupViewport`, `applyResolution`) | coalesced resize, portrait pause, context loss, phone DPR caps |
 | Realities | `core/Reality.ts`, `core/PhaseSystem.ts` | bitmasks (`R_NORMAL`, `R_VOID`, `R_DERANGED`); transition state machine |
-| Movement + gravity | `entities/PlayerController.ts` | position, velocity, local up; modes `ground / air / vault / toWall / wall / fromWall` |
+| Movement + gravity | `entities/PlayerController.ts` | position, velocity, local up; modes `ground / air / vault / toWall / wall / fromWall`; the active `GravitySurface` frame; `faceInput` maps screen input onto any face orientation |
+| Gravity surfaces | `world/layout.ts` (`GRAVITY_SURFACES`), `world/WalkGrid.ts` (one face grid each) | data per face: frame (origin, normal, u, v), walkable rect, holes, feet, entry region, realities |
+| Displaced architecture | `world/Displaced.ts` | house template (merged per house), village, inverted/far repetitions, Void deck + filament outline, ravine rocks, facade with cross-section and Deranged footprints |
+| Wind vortex | `core/Wind.ts` (field), `graphics/VortexDebris.ts` (debris), layout `VORTEX_ROUTES` | travelling eddy on authored routes; bends the shared field; particles with `windResponse` drift with it |
 | Collision data | `world/WalkGrid.ts` | 0.5 m ground grid (reality mask, surface, height, recovery segment), obstacles (circle/box, reality mask, `low` for vaults), wall face grid |
-| Character | `entities/Player.ts` | model, procedural animation in any surface frame |
+| Character | `entities/Player.ts` | articulated procedural model (shaped limbs, lathed torso, hood shell, coat panels), procedural animation in any surface frame, coat/hood springs |
 | Camera | `core/CameraController.ts` | follow, vantages, scripted shots, occlusion fade, control axes |
 | Flame | `graphics/PalmFire.ts` | presence, gather/release, ember, fuel, light, particles |
 | Creatures | `entities/Creatures.ts` | Watcher (avoidant), Drifters (flame-sensitive), Hound (pursuer) |

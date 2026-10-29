@@ -8,6 +8,8 @@ export interface FieldContext {
   fireStrength: number;   // 0..~1.5
   phase: number;          // 0..1 phase progress
   player: Vector3;
+  /** World wind at the protagonist (direction × strength, vortex included); families with windResponse drift with it. */
+  wind?: Vector3;
 }
 
 export interface FamilySpec {
@@ -28,6 +30,7 @@ export interface FamilySpec {
   spin?: number;
   homeSpring?: number;            // pull toward each particle's home position
   floorY?: number;                // die before reaching this height
+  windResponse?: number;          // how much the shared wind carries this family
   behavior?: (f: ParticleField, i: number, ctx: FieldContext) => void;
   seed?: number;
 }
@@ -146,6 +149,7 @@ export class ParticleField {
     const spring = s.homeSpring ?? 0;
     const t = ctx.time;
 
+    const windK = (s.windResponse ?? 0) * dt, wx = ctx.wind ? ctx.wind.x : 0, wz = ctx.wind ? ctx.wind.z : 0;
     for (let i = 0; i < this.count; i++) {
       this.age[i] += dt;
       const life = this.life[i];
@@ -179,6 +183,7 @@ export class ParticleField {
         vz += (this.hz[i] - z) * spring * dt;
       }
       vy += grav;
+      if (windK > 0) { vx += wx * windK; vz += wz * windK; }
       vx *= dragK; vy *= dragK; vz *= dragK;
 
       // Contradictory trajectories: briefly retrace toward where the particle was

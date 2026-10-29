@@ -14,7 +14,11 @@ shipped or fetched. All are original to this repository.
 | Floating landmass | monumental vista | `world/Vista.ts` | merged boxes, ~74 × 96 m | far | fog-free unlit haze tones | none (unreachable) | blockout |
 | Moving light | long-range motivation | `world/MovingLight.ts` | billboard + core | 4.5 m glow | additive, fog-free | none | final |
 | Phase geometry | Void spans, real fragment, Deranged tree | `world/PhaseGeometry.ts` | merged boxes | 1:1 | `phaseSurface` shader + fallback | `WalkGrid` segments | final |
-| Protagonist | hooded teenager | `entities/Player.ts` | 30 boxes on a transform hierarchy | 1.75 m | coat, trousers, shoes, skin, hood interior | no LOD | **placeholder-grade figure** (no rig) |
+| Protagonist | hooded teenager | `entities/Player.ts` | procedural: tapered limb cylinders + joint caps, lathed torso, hood sphere shell + tube edge, 3 ribbon coat panels, satchel/strap/belt | ≈1.66 m | coat, trousers, shoes, skin, hood interior | no LOD | **procedural articulated figure** (transform hierarchy, no skinned rig or IK) |
+| Village houses | the repeated house | `world/Displaced.ts` | one template (plinth, walls, 45° gable roof, door, windows, chimney, gutter) merged per house | 4.6 × 5.2 m | plaster, timber, stone, dark recess, one lit window | occlusion fade | procedural, authored template |
+| Facade | walkable house front | `world/Displaced.ts` | boxes merged: front with broken band, cornice, courses, windows, floor cross-section | 27 × 9 m | plaster, stone, timber | gravity surface 1 | procedural |
+| Void deck / outline | path that exists only in Void | `world/Displaced.ts` | box decks + line system | 2 spans | emissive pale, alpha by Void amount | walk grid R_VOID | procedural |
+| Vortex debris | leaves and grit | `graphics/VortexDebris.ts` | pooled ParticleField (160) | — | alpha cubes | quality-scaled | procedural |
 | Creatures | Watcher, Drifters, Hound | `entities/Creatures.ts` | boxes / particle cubes | 2.5 m / small / 1.4 m | dark sheen | grid-constrained (Hound) | blockout |
 | Textures (10) | ground, timber, rust, bark, stone, concrete, fabric, sign, footprint, blob, glows | `world/Materials.ts`, `graphics/*` | canvas DynamicTexture 64–256 px | tiled | — | — | final |
 | Shaders | `phaseSurface`, `RealityPlugin` | `world/PhaseGeometry.ts`, `graphics/RealityPlugin.ts` | GLSL via Babylon | — | — | — | final |
