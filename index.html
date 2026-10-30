@@ -79,6 +79,11 @@
       opacity: 0; transition: opacity 1s ease;
     }
     #hint.visible { opacity: 0.85; }
+    /* Void: text may sit over the flame's white; a soft dark ground keeps it legible */
+    body.in-void #thought-box, body.in-void #hint {
+      text-shadow: 0 0 2px #000, 0 0 6px #000, 0 0 18px rgba(0, 0, 0, 0.9);
+      background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.6), rgba(0, 0, 0, 0) 72%); padding: 8px 34px;
+    }
     #fade { position: absolute; inset: 0; background: #000; opacity: 1; pointer-events: none; z-index: 30; transition: opacity 0.6s ease; }
 
     #end-screen { background: #000; z-index: 45; opacity: 0; pointer-events: none; transition: opacity 4s ease; }
@@ -138,6 +143,8 @@
     }
     .touch-jump { width: 30%; height: 30%; right: 8%; bottom: 54%; }
     .touch-examine { width: 28%; height: 28%; right: 60%; bottom: 52%; }
+    .touch-shift { width: 22%; height: 22%; right: 38%; bottom: 60%; }
+    .touch-shift.active { border-color: rgba(205, 190, 150, 0.6); }
     .touch-pause {
       position: absolute; width: 40px; height: 40px; font-size: 11px; letter-spacing: 0;
       top: calc(env(safe-area-inset-top, 0px) + 12px); right: calc(env(safe-area-inset-right, 0px) + 14px);

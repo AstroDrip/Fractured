@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Vector3 } from '@babylonjs/core';
 import { WalkGrid, Surface } from '../src/world/WalkGrid';
-import { VILLAGE, VILLAGE_ROUTE, GRAVITY_SURFACES, FACADE, BARRIER, VORTEX_ROUTES, CUTTING, ravineDepth } from '../src/world/layout';
+import { VILLAGE, VILLAGE_ROUTE, GRAVITY_SURFACES, FACADE, BARRIER, VORTEX_ROUTES, CUTTING, ravineDepth, ANCHOR, realityRegionAt } from '../src/world/layout';
 import { SURFACE_FRAMES, faceInput } from '../src/entities/PlayerController';
 import { Wind } from '../src/core/Wind';
 import type { RealityId } from '../src/core/Reality';
@@ -181,5 +181,30 @@ describe('The cutting', () => {
     const seen = reach(-12.6, 50, 'normal', 37, 72);
     expect(has(seen, -16, 56)).toBe(false);
     expect(has(seen, -9, 56)).toBe(false);
+  });
+});
+
+describe('The first anchor (the fallen post)', () => {
+  const A = ANCHOR;
+  const end = { x: A.standing.x + 0.5, z: A.standing.z };
+  it('the touch point is on the cutting route in Normal', () => {
+    expect(grid.isWalkable(A.touch.x, A.touch.z, 'normal')).toBe(true);
+  });
+  it('the ledge behind the post is reached only in Deranged', () => {
+    expect(has(reach(A.touch.x, A.touch.z, 'normal', 58.8, 64), end.x, end.z)).toBe(false);
+    expect(has(reach(A.touch.x, A.touch.z, 'deranged', 58.8, 64), end.x, end.z)).toBe(true);
+    expect(grid.isWalkable(end.x, end.z, 'void')).toBe(false);
+  });
+  it('the ledge sits at its terrain height', () => {
+    expect(grid.heightAt(end.x, end.z)).toBeCloseTo(A.spur.h, 1);
+  });
+  it('Deranged is allowed around the post only, from stage 1, without Void; not on the trunk bridge', () => {
+    const r = realityRegionAt(A.touch.x, A.touch.z);
+    expect(r.id).toBe('anchor1');
+    expect(r.deranged).toBe(1);
+    expect(r.void).toBe(false);
+    expect(realityRegionAt(CUTTING.bridge.x, (CUTTING.bridge.z0 + CUTTING.bridge.z1) / 2).id).not.toBe('anchor1');
+    expect(realityRegionAt(-12.6, 50).deranged).toBe(false);
+    expect(realityRegionAt(-17, 75).deranged).toBe(false);   // the forest stays Normal / Void
   });
 });

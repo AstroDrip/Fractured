@@ -1,7 +1,8 @@
-import { Engine, Scene, Vector3, Vector2, Matrix, StandardMaterial } from '@babylonjs/core';
+import { Engine, Scene, Vector3, Vector2, Matrix, StandardMaterial, PBRMaterial, Material, LinesMesh, Color3 } from '@babylonjs/core';
 import type { WalkGrid } from '../world/WalkGrid';
 import { InputManager } from './InputManager';
 import { CameraController } from './CameraController';
+import { RealityController } from './RealityController';
 import { PhaseSystem } from './PhaseSystem';
 import { AudioSystem, FootSurface } from './AudioSystem';
 import { Settings } from './Settings';
@@ -16,7 +17,7 @@ import { PalmFire } from '../graphics/PalmFire';
 import { FieldContext } from '../graphics/ParticleField';
 import { Atmosphere } from '../graphics/Atmosphere';
 import { PostFX, Quality } from '../graphics/PostFX';
-import { RealityFX } from '../graphics/RealityPlugin';
+import { RealityFX, RealityPlugin, voidWhite } from '../graphics/RealityPlugin';
 import { World } from '../world/World';
 import { ChapterOne } from '../world/ChapterOne';
 import { Surface } from '../world/WalkGrid';
@@ -28,7 +29,7 @@ import { SkinnedBody } from '../entities/SkinnedBody';
 import protagonistUrl from '../../assets/game/character/protagonist.glb?url';
 import { FlameTapCharger } from './FlameTapCharger';
 import { TOUCH } from './controls';
-import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, TRACK_HALF_WIDTH, VILLAGE, CUTTING, GRAVITY_SURFACES, phaseTargetAt, vantageAt } from '../world/layout';
+import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, TRACK_HALF_WIDTH, VILLAGE, CUTTING, FOREST, RIFT, riftHeight, GRAVITY_SURFACES, realityRegionAt, ANCHOR, ATTUNE, WALL_ANCHOR, vantageAt } from '../world/layout';
 
 const REVEAL_RELEASE_Z = 117;  // the reveal hands back here (just before the sleeper pile), or after its hold
 const PUSH_TIME = 0.4;        // seconds: returning matter pushes the protagonist out
@@ -77,6 +78,11 @@ export class Game {
   private input!: InputManager;
   private cam!: CameraController;
   private phase = new PhaseSystem();
+  private realities = new RealityController();
+  private linesVoid = 0;
+  private anchorHold = 0;
+  private lineColors = new Map<LinesMesh, Color3>();
+  private static readonly TRACE_DARK = new Color3(0.08, 0.08, 0.085);
   private world!: World;
   private player!: Player;
   private ctrl!: PlayerController;
@@ -149,7 +155,7 @@ export class Game {
     for (let i = 0; i < steps.length; i++) {
       this.hud.setLoading(i / (steps.length + 2), steps[i].label);
       await nextFrame();
-      steps[i].run();
+      await steps[i].run();
     }
     this.hud.setLoading(steps.length / (steps.length + 2), 'the hooded figure');
     await nextFrame();
@@ -159,6 +165,15 @@ export class Game {
     this.debris = new VortexDebris(this.scene, this.wind.vortex);
     this.chapter = new ChapterOne(this.hud, this.audio);
     this.post = new PostFX(this.scene, this.cam.camera);
+    // Everything else that draws the world (the figure, creatures, water, lamps, the vista)
+    // also goes black / silhouetted in Void, but keeps its matter
+    const voidOnly = (m: Material) => {
+      if (!(m instanceof StandardMaterial || m instanceof PBRMaterial) || m.pluginManager?.getPlugin('RealityFX')) return;
+      if (/^(fire|ember|palmFire)/i.test(m.name)) return;
+      new RealityPlugin(m, 0, /^riftVoidDeck$/.test(m.name) ? 1 : 0, false);
+    };
+    this.scene.materials.forEach(voidOnly);
+    this.scene.onNewMaterialAddedObservable.add(voidOnly);
     this.cam.setOccluders(this.world.occluders());
     this.atmos.setShadowCasters([...this.world.shadowCasters(), ...this.player.meshes]);
     // The authored skinned body; the procedural figure stays if it cannot be loaded
@@ -232,7 +247,13 @@ export class Game {
     this.fire.onGuttered = () => this.chapter.onGuttered();
     this.fire.onRefusedSummon = () => this.audio.refused();
     this.fire.contact = (p, r) => this.flameContact(p, r);
-    this.fire.onImpact = (_at, hit, spec) => { if (hit === 'water') this.audio.hiss(spec.charge); };
+    this.fire.onImpact = (at, hit, spec) => {
+      if (hit === 'water') { this.audio.hiss(spec.charge); this.world.cutting.disturb(at.x, at.z, spec.charge); }
+      else {
+        this.world.debris.burst(at, spec, this.phase.reality);
+        if (this.world.yard.onImpact(at, spec)) this.chapter.onAshCleared();
+      }
+    };
     this.fire.onPulse = (p) => {
       this.audio.pulse(p.strength);
       this.cam.addShake(0.04 + p.strength * 0.05);
@@ -248,11 +269,20 @@ export class Game {
     // Leaving is refused (the phase holds) on a face, and while matter that exists in the
     // reality being returned to would close around the protagonist. Leaving over empty
     // ground (the Void spans) is still allowed: that is a fall with its own recovery.
-    this.phase.mustHold = () => this.ctrl.onWall || this.world.grid.insideActiveObstacle(this.ctrl.pos, 'normal') !== null;
+    this.phase.mustHold = () => this.ctrl.onWall || this.world.grid.insideActiveObstacle(this.ctrl.pos, 'normal') !== null ||
+      // Ground that exists only in Deranged (the first anchor's ledge): Normal waits until they step off
+      (this.phase.target === 'deranged' && !this.world.grid.canStand(this.ctrl.pos, 'normal'));
     // The world shudders as a phase begins (and a little as it lets go)
     this.phase.onEnterStart = () => { this.audio.phaseEnter(); this.post.triggerRing(this.fireUV, 1); this.cam.addShake(0.22); };
     this.phase.onLeaveStart = () => { this.audio.phaseExit(); this.post.triggerRing(this.fireUV, 0.55); this.cam.addShake(0.1); };
     this.phase.onRefused = () => { this.audio.refused(); this.chapter.onRefused(this.fire.isPresent); };
+    // A reality that cannot be entered here answers quietly: a sound and a small strain, no message
+    this.realities.onRefused = (why) => {
+      this.audio.refused(); this.phase.strain = Math.max(this.phase.strain, 0.5);
+      if (why === 'no-flame') this.chapter.onRefused(this.fire.isPresent);
+    };
+    this.realities.onUnlocked = (stage) => this.chapter.onDerangedUnlocked(stage);
+    this.realities.onRegionEnded = () => this.chapter.onDerangedLost();
     this.phase.onRejected = (enter) => {
       this.audio.strain();
       this.chapter.onRejected(enter, this.ctrl.onWall, !enter && !this.ctrl.onWall);
@@ -374,6 +404,7 @@ export class Game {
     this.ctrl.teleport(start);
     this.player.setYaw(START_YAW);
     this.phase.reset();
+    this.realities.reset();
     this.fire.reset();
     this.chapter.reset();
     const w = this.world;
@@ -384,6 +415,8 @@ export class Game {
     this.ending.t = 0; this.ending.cut = false;
     this.push.active = false;
     this.debris.clear();
+    this.world.debris.clear();
+    this.world.yard.reset();
     this.tapCharger.reset();
     this.touch.releaseAll();
     this.voidAmt = 0; this.derangedAmt = 0;
@@ -417,9 +450,41 @@ export class Game {
       }
       if (n === MAX_STEPS) this.acc = 0;
     }
+    this.updatePerf();
     this.updateTouchView();
     this.input.endFrame();
     this.scene.render();
+  }
+
+  // ?perf in the URL: frame time, FPS, draw calls, active meshes and triangles, twice a second
+  private perfEl: HTMLDivElement | null = typeof location !== 'undefined' && /[?&]perf\b/.test(location.search) ? (() => {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:8px;top:8px;z-index:99;font:11px monospace;color:#9ab;background:rgba(0,0,0,.55);padding:4px 6px;pointer-events:none;white-space:pre';
+    document.body.appendChild(el); return el;
+  })() : null;
+  private perfT = 0;
+  private updatePerf(): void {
+    if (!this.perfEl) return;
+    const now = performance.now();
+    if (now - this.perfT < 500) return;
+    this.perfT = now;
+    const e = this.engine as unknown as { _drawCalls?: { current: number } };
+    const active = this.scene.getActiveMeshes();
+    let tris = 0;
+    for (let i = 0; i < active.length; i++) tris += active.data[i].getTotalIndices() / 3 * Math.max(1, (active.data[i] as unknown as { thinInstanceCount?: number }).thinInstanceCount || 1);
+    this.perfEl.textContent = `${(1000 / Math.max(1, this.engine.getFps())).toFixed(1)} ms  ${this.engine.getFps().toFixed(0)} fps\n` +
+      `draws ${e._drawCalls ? e._drawCalls.current : '?'}  meshes ${active.length}  tris ${(tris / 1000).toFixed(0)}k\n` +
+      `${this.engine.getRenderWidth()}x${this.engine.getRenderHeight()}  ${this.settings.data.quality}`;
+  }
+
+  /** The held touch available where the protagonist stands, if any (in Normal only). */
+  private heldTouchHere(): { stage: 1 | 3; hold: number } | null {
+    if (this.phase.state !== 'normal') return null;
+    const p = this.ctrl.pos;
+    const near = (t: { x: number; z: number; r: number }) => Math.hypot(p.x - t.x, p.z - t.z) < t.r;
+    if (this.realities.stage < 1 && (near(ANCHOR.touch) || near(WALL_ANCHOR.touch))) return { stage: 1, hold: 0.5 };
+    if (this.realities.stage < 3 && this.world.yard.cleared && !this.world.yard.pulled && near(ATTUNE.touch)) return { stage: 3, hold: 0.6 };
+    return null;
   }
 
   // Touch controls appear only in play, only while touch is the device in use
@@ -431,7 +496,10 @@ export class Game {
     this.touch.update({
       fireState: this.fire.state, charge: this.fire.charge, fuel: this.fire.fuel,
       canSummon: this.fire.fuel >= 0.15, phasing: this.phase.state !== 'normal' && this.phase.state !== 'locked',
-      phaseRefused: !this.fire.isPresent && !this.ctrl.onWall, canExamine: this.chapter.examinable
+      phaseRefused: !this.fire.isPresent && !this.ctrl.onWall,
+      canExamine: this.chapter.examinable || this.heldTouchHere() !== null,
+      shiftAvailable: this.realities.derangedAllowed(realityRegionAt(this.ctrl.pos.x, this.ctrl.pos.z)),
+      shifted: this.realities.derangedOn
     });
   }
 
@@ -469,13 +537,33 @@ export class Game {
       if (this.fire.charge === 0) this.tapCharger.reset();
     }
 
-    // Phase: the region decides which reality a held phase leads to
-    this.phase.setTarget(phaseTargetAt(c.pos.z));
+    // Held touches (a deliberate act, not contact): the fallen post finds Deranged (stage 1),
+    // the yard's last lever attunes to it (stage 3). Each enters Deranged once, then the
+    // shift works wherever regions allow it at that stage.
+    const touch = this.heldTouchHere();
+    this.anchorHold = touch && controllable && this.input.isHeld('inspect') ? this.anchorHold + dt : 0;
+    if (touch && this.anchorHold >= touch.hold) {
+      this.anchorHold = 0;
+      if (this.fire.state === 'active' && this.fire.strength > 0.5 && this.fire.fuel > 0.15) {
+        if (touch.stage === 3) { w.yard.pull(); this.cam.addShake(0.3); this.audio.phaseEnter(); }
+        else this.cam.addShake(0.12);
+        this.realities.unlock(touch.stage);
+        this.realities.derangedOn = true;
+      } else this.chapter.onRefused(this.fire.isPresent);
+    }
+    // Realities: the region decides what can be entered; progression what has been found.
+    // Phase (hold) leads to Void, the shift (tap) toggles Deranged; one transition at a time.
+    const region = realityRegionAt(c.pos.x, c.pos.z);
     this.fire.updateFuel(dt, this.phase.reality === 'void');
     // Hysteresis: entering needs a reserve; once there, the phase lasts until the flame goes out
     const fireReady = this.fire.state === 'active' && this.fire.strength > 0.5 &&
       (this.phase.isSolid ? this.fire.fuel > 0 : this.fire.fuel > 0.15);
-    this.phase.update(dt, controllable && this.input.isHeld('phase'), fireReady || c.onWall, inputLive);
+    this.realities.step(dt, this.phase, region, {
+      phaseHeld: controllable && this.input.isHeld('phase'),
+      phasePressed: first && controllable && this.input.wasPressed('phase'),
+      shiftPressed: first && controllable && this.input.wasPressed('shift'),
+      ready: fireReady || c.onWall
+    }, inputLive);
     // ...and keeps trembling until the new reality has settled
     if (this.phase.state === 'entering') this.cam.addShake(dt * 0.35);
     // The Void cannot be held without the flame
@@ -497,7 +585,7 @@ export class Game {
       x: this.input.moveVector.x, y: this.input.moveVector.y,
       // Touch: how far the stick is pushed picks the speed tier
       run: this.input.isHeld('run') || (this.input.lastDevice === 'touch' && this.input.moveMagnitude >= TOUCH.stickRun),
-      slow: this.input.isHeld('slow') || (this.input.lastDevice === 'touch' && this.input.moveMagnitude > 0 && this.input.moveMagnitude < TOUCH.stickSlow),
+      slow: this.input.isHeld('slow') || this.input.padSlow || (this.input.lastDevice === 'touch' && this.input.moveMagnitude > 0 && this.input.moveMagnitude < TOUCH.stickSlow),
       jump: first && this.input.wasPressed('jump')
     }, reality, inputLive);
     this.updateRecovery(dt, reality);
@@ -506,7 +594,7 @@ export class Game {
     const speed = Math.hypot(c.vel.x, c.vel.z, c.onWall ? c.vel.y : 0);
     const story = this.chapter.update({
       dt, player: c.pos, moving: speed > 0.2, firePresent: this.fire.isPresent, fireStrength: this.fire.strength,
-      reality, voidAmt: this.voidAmt, derangedAmt: this.derangedAmt, onWall: c.onWall, fuel: this.fire.fuel,
+      reality, voidAmt: this.voidAmt, derangedAmt: this.derangedAmt, onWall: c.onWall, yardOpen: w.yard.cleared, fuel: this.fire.fuel,
       lightVisible: w.light.visible, watcherVisible: w.watcher.state === 'watch' && Vector3.Distance(c.pos, w.watcher.root.position) < 32,
       houndState: w.hound.state, nearDrifters: this.fire.isPresent && c.pos.z > 172 && c.pos.z < 182,
       figureSeen: w.anomalies.figureSeen, figureGone: w.anomalies.figureGone, resonance: this.fire.resonance,
@@ -530,7 +618,28 @@ export class Game {
     this.ctx.dt = dt;
     this.ctx.phase = this.phase.progress;
     this.ctx.player.copyFrom(c.pos);
-    this.fire.phaseTint = this.phase.progress;
+    // The flame pales while phasing, except in Void, where it must stay amber against the white
+    this.fire.phaseTint = this.phase.progress * (1 - this.voidAmt);
+    this.fire.voidTone = this.voidAmt;
+    this.post.setVoid(this.voidAmt);
+    this.hud.setVoid(this.voidAmt > 0.3);
+    // Lines have no world shader. In Void, wires, ropes and threads leave with the dark;
+    // the Void's own traces (fracture, edges, lattice) stay as dark residue, legible on
+    // the white and almost nothing against the black
+    if (Math.abs(this.voidAmt - this.linesVoid) > 0.002 || (this.voidAmt === 0 && this.linesVoid !== 0)) {
+      this.linesVoid = this.voidAmt;
+      for (const m of this.scene.meshes) {
+        if (!(m instanceof LinesMesh) || m.name === 'fireFilaments') continue;
+        const trace = /trace|voidEdge/i.test(m.name);
+        let base = this.lineColors.get(m);
+        if (!base) { base = m.color.clone(); this.lineColors.set(m, base); }
+        if (trace) Color3.LerpToRef(base, Game.TRACE_DARK, this.voidAmt, m.color);
+        else m.isVisible = this.voidAmt < 0.5;
+      }
+      // Mist and fog particles would hang grey in the black: not drawn in Void
+      for (const ps of this.scene.particleSystems) ps.layerMask = this.voidAmt < 0.5 ? 0x0fffffff : 0;
+      this.world.fog.setVoid(this.voidAmt);
+    }
     this.fire.feet.copyFrom(c.pos);
     this.fire.surfaceUp.copyFrom(c.up);
     this.fire.aim.set(this.player.forward.x, 0, this.player.forward.z).normalize();
@@ -566,6 +675,11 @@ export class Game {
     w.displaced.update(dt, this.voidAmt, this.derangedAmt);
     w.props.barrierTrace.alpha = 0.05 + this.voidAmt * 0.5;
     w.cutting.update(dt, this.voidAmt);
+    w.debris.update(dt, this.ctx);
+    w.yard.update(dt);
+    w.forest.update(this.voidAmt);
+    w.rift.update(this.voidAmt);
+    w.anchor.update(this.derangedAmt);
     w.structures.wallFootprints.visibility = this.derangedAmt * 0.95;
     w.structures.wallFootprints.isVisible = this.derangedAmt > 0.02;
 
@@ -595,6 +709,11 @@ export class Game {
     RealityFX.windStrength = this.wind.strength; RealityFX.gust = this.wind.gust;
     RealityFX.hold.copyFrom(this.fire.position);
     RealityFX.holdRadius = this.fire.isPresent ? (2.6 + 2.4 * this.fire.strength) * (0.45 + 0.55 * this.fire.fuel) * (1 - this.voidAmt * 0.4) : 0;
+    // Void: the white fragment around the flame shrinks with fuel, its edge shakes and the
+    // detail inside it thins as the fuel runs low (the same fuel the Void already drains)
+    RealityFX.white.copyFrom(this.fire.position);
+    const wf = voidWhite(this.fire.fuel, this.fire.strength, this.fire.isPresent);
+    RealityFX.whiteRadius = wf.radius; RealityFX.whiteUnstable = wf.unstable; RealityFX.whiteDetail = wf.detail;
     RealityFX.infl.copyFrom(this.fire.influence.pos);
     RealityFX.inflRadius = this.fire.influence.radius * this.fire.influence.strength;
     const vx = this.wind.vortex;
@@ -606,8 +725,13 @@ export class Game {
     if (this.state !== 'ending') this.cam.setDistance(c.pos.z > 170 && c.pos.z < 212 ? this.cam.baseDistance + 3 : this.cam.onWallDistance(c.onWall, this.cam.baseDistance));
     const vant = vantageAt(c.pos.z);
     // Off the line (the village) the square has its own framing, from the side where no house stands
-    const inCutting = c.pos.x < -(TRACK_HALF_WIDTH + 1.5) && c.pos.z > 38 && c.pos.z < 70;
-    if (inCutting && this.state !== 'ending') {
+    // The cutting and the forest: the ordinary view, so cliff and trees stand behind the protagonist
+    const inCutting = c.pos.x < -(TRACK_HALF_WIDTH + 1.5) && c.pos.z > 38 && c.pos.z < 140;
+    const atOverlook = Math.hypot(c.pos.x - FOREST.overlook.x, c.pos.z - FOREST.overlook.z) < FOREST.overlook.r + 3;
+    if (atOverlook && this.state !== 'ending') {
+      // The overlook: the camera drops and turns west, over the edge, into the distance
+      this.cam.setVantage(1, 0.3, 12, Math.PI / 4, dt);
+    } else if (inCutting && this.state !== 'ending') {
       // The cutting: the ordinary view, so the cliff stands behind the protagonist
       this.cam.setVantage(0, 0.72, 17, 0, dt);
     } else if (c.pos.x > TRACK_HALF_WIDTH + 2 && !c.onWall && this.state !== 'ending') {
@@ -650,7 +774,8 @@ export class Game {
     // Framed (measured: projected island silhouette and protagonist) so the whole island fits
     // in the upper left at 4:3 and wider, with the protagonist in the lower right third
     this.cam.playShot({ focus, focusWeight: 0.1, distance: 12, pitch: 0.06, yawOffset: 0.55, fov: 0.75,
-      inTime: 4.5, hold: 4.5, outTime: 3.5, releaseOnMove: false, releaseBeyondZ: REVEAL_RELEASE_Z });
+      // Coming back from the forest it starts later down the line: the boundary moves with it
+      inTime: 4.5, hold: 4.5, outTime: 3.5, releaseOnMove: false, releaseBeyondZ: Math.max(REVEAL_RELEASE_Z, this.ctrl.pos.z + 14) });
   }
 
   /**
@@ -661,7 +786,10 @@ export class Game {
   private flameContact(p: Vector3, r: number): FlameContact {
     const w = this.world, grid = w.grid, cl = CUTTING.cleft;
     if (p.z > cl.z0 && p.z < cl.z1 && p.x > cl.x0 && p.x < cl.x1 && p.y < CUTTING.stream.y + r) return 'water';
-    const ground = w.terrain.heightAt(p.x, p.z);
+    const rb = RIFT.bounds;
+    const inRift = p.x > rb.x0 && p.x < rb.x1 && p.z > rb.z0 && p.z < rb.z1;
+    const rh = inRift ? riftHeight(p.x, p.z) : null;
+    const ground = inRift ? (rh ?? -100) : w.terrain.heightAt(p.x, p.z);
     if (ground > -100 && p.y - r < ground) return 'ground';
     if (p.y < GROUND_Y - 8) return 'ground';                    // gone into the gap or the fog below
     const g = ground > -100 ? ground : GROUND_Y;

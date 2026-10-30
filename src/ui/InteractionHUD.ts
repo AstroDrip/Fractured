@@ -115,10 +115,19 @@ export class InteractionHUD {
     'F': ['flame', 'tap to open your hand'],
     'R': ['flame', 'tap to gather the fire, hold to let it go'],
     'Q': ['phase', 'hold to phase'],
+    'T': ['shift', 'tap shift'],
     'E': ['look'],
     'A': ['stick', 'walk into the wall']
   };
   private touchMode = false;
+
+  private inVoid = false;
+  /** Void: the HUD text gains a dark ground (it may sit over the white). */
+  public setVoid(on: boolean): void {
+    if (on === this.inVoid) return;
+    this.inVoid = on;
+    document.body.classList.toggle('in-void', on);
+  }
 
   public setTouchMode(on: boolean): void {
     if (on === this.touchMode) return;

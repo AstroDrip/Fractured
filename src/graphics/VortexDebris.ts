@@ -19,7 +19,7 @@ export class VortexDebris {
 
   constructor(scene: Scene, private vortex: Vortex) {
     this.field = new ParticleField(scene, {
-      name: 'vortexDebris', capacity: 160, blend: 'alpha', life: [2.2, 4.2], size: [0.05, 0.12],
+      name: 'vortexDebris', capacity: 160, blend: 'alpha', shape: 'flake', life: [2.2, 4.2], size: [0.05, 0.12],
       colorA: [0.46, 0.42, 0.34, 0.95], colorB: [0.3, 0.28, 0.24, 0.0], fadeIn: 0.1, fadeOut: 0.35,
       drag: 0.6, gravity: -0.4, spin: 6, seed: 31, floorY: GROUND_Y - 0.1,
       behavior: (f, i, c) => this.swirl(f, i, c)

@@ -20,7 +20,7 @@ stick radius, dead zone, run/slow thresholds, charge per tap (0.25), minimum int
 between counted taps (70 ms), how long tap charge holds before fading (2.6 s), long-press
 time and the world-tap limits. The charge never exceeds the flame's own maximum (1).
 
-Hints change wording in touch mode ("[phase] hold to phase" instead of "[Q] …").
+Hints change wording in touch mode ("[phase] hold to phase" instead of "[Q] …"). A small **shift** button (Deranged toggle) appears only once Deranged has been found and only where the region allows it; it is never shown disabled. The **look** button is now held while the finger is down (a hold touches the fallen post) and appears at the post before it is found. Checked in Chromium emulation at 812 × 375 with synthetic touch pointers: look shown at the post, a 0.7 s hold finds Deranged, shift then shown (active) and hidden outside the post's area. Shift is small (≈ 37 px). Not checked on a real phone.
 
 ## Architecture
 
@@ -74,7 +74,7 @@ Run before and after any mobile change.
 | Hardware scaling at Medium = 1 (unchanged) | passed |
 | Desktop shadows/particles unchanged | by code: phone factors apply only when `mobile` |
 | Production build loads, JS served as `text/javascript`, harness absent, no console errors | passed (`vite preview`) |
-| `npm test` | 66 passing |
+| `npm test` | 109 passing |
 
 ## Mobile test results (Chromium device emulation, 740×360, DPR 2)
 

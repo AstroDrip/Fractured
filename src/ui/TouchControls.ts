@@ -1,7 +1,7 @@
 import { InputManager } from '../core/InputManager';
 import { TOUCH } from '../core/controls';
 
-type Owner = 'stick' | 'phase' | 'flame' | 'jump' | 'examine' | 'world';
+type Owner = 'stick' | 'phase' | 'shift' | 'flame' | 'jump' | 'examine' | 'world';
 
 export interface TouchViewState {
   fireState: 'dismissed' | 'summoning' | 'active' | 'dismissing';
@@ -11,13 +11,15 @@ export interface TouchViewState {
   phasing: boolean;      // phase input is having effect
   phaseRefused: boolean; // no flame: phase cannot start
   canExamine: boolean;
+  shiftAvailable: boolean;  // Deranged found and allowed here: only then is the shift shown
+  shifted: boolean;
 }
 
 /**
  * Touch controls for landscape phones. Owns touch pointers only and turns them into
  * the same intents the keyboard produces (via InputManager's virtual API):
  *  - left: a floating joystick (direction + how far it is pushed)
- *  - right: hold to phase; tap the flame to summon / gather, long-press to let it go
+ *  - right: hold to phase; tap shift (only once found, only where it works); tap the flame to summon / gather, long-press to let it go
  *    (or close the hand when nothing is gathered); hop / climb over; examine (only
  *    when something can be examined); pause
  *  - a short tap on open world sends an ember there
@@ -32,7 +34,7 @@ export class TouchControls {
   private stickBase: HTMLDivElement;
   private stickKnob: HTMLDivElement;
   private stickOrigin = { x: 0, y: 0 };
-  private btn: Record<'phase' | 'flame' | 'jump' | 'examine' | 'pause', HTMLDivElement>;
+  private btn: Record<'phase' | 'shift' | 'flame' | 'jump' | 'examine' | 'pause', HTMLDivElement>;
   private flameRing: HTMLDivElement;
   private flameTimer: ReturnType<typeof setTimeout> | null = null;
   private flameHoldFired = false;
@@ -49,6 +51,7 @@ export class TouchControls {
     const cluster = this.el('div', 'touch-cluster');
     this.btn = {
       phase: this.button(cluster, 'touch-phase', 'phase'),
+      shift: this.button(cluster, 'touch-shift hidden', 'shift'),
       flame: this.button(cluster, 'touch-flame', 'flame'),
       jump: this.button(cluster, 'touch-jump', 'climb'),
       examine: this.button(cluster, 'touch-examine', 'look'),
@@ -156,19 +159,22 @@ export class TouchControls {
     fl.addEventListener('pointercancel', (e) => endFlame(e, true));
     fl.addEventListener('lostpointercapture', (e) => endFlame(e, true));
 
-    // Jump / climb over, examine: one-shot presses
-    for (const [key, action] of [['jump', 'jump'], ['examine', 'inspect']] as const) {
+    // Jump / climb over, examine, shift: one-shot presses
+    // (examine is held while the finger stays down: some things want a deliberate touch)
+    for (const [key, action] of [['jump', 'jump'], ['examine', 'inspect'], ['shift', 'shift']] as const) {
       const b = this.btn[key];
       b.addEventListener('pointerdown', (e) => {
         if (e.pointerType === 'mouse') return;
         this.capture(e, b, key);
         b.classList.add('pressed');
-        this.input.pressVirtual(action);
+        if (action === 'inspect') this.input.setVirtualHeld(action, true);
+        else this.input.pressVirtual(action);
       });
       const end = (e: PointerEvent) => {
         if (this.owners.get(e.pointerId) !== key) return;
         this.owners.delete(e.pointerId);
         b.classList.remove('pressed');
+        if (action === 'inspect') this.input.setVirtualHeld(action, false);
       };
       for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) b.addEventListener(ev, end);
     }
@@ -232,6 +238,7 @@ export class TouchControls {
     this.worldStart.clear();
     this.stopStick();
     this.input.setVirtualHeld('phase', false);
+    this.input.setVirtualHeld('inspect', false);
     for (const b of Object.values(this.btn)) b.classList.remove('pressed', 'held');
   }
 
@@ -247,5 +254,7 @@ export class TouchControls {
     this.btn.phase.classList.toggle('active', s.phasing);
     this.btn.phase.classList.toggle('unavailable', s.phaseRefused);
     this.btn.examine.classList.toggle('hidden', !s.canExamine);
+    this.btn.shift.classList.toggle('hidden', !s.shiftAvailable && !s.shifted);
+    this.btn.shift.classList.toggle('active', s.shifted);
   }
 }

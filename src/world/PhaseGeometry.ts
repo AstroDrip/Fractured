@@ -1,5 +1,6 @@
+import { RealityFX, VOID_TONE_GLSL } from '../graphics/RealityPlugin';
 import {
-  Scene, Mesh, MeshBuilder, ShaderMaterial, Effect, Vector3, Color3, StandardMaterial, Material
+  Scene, Mesh, MeshBuilder, ShaderMaterial, Effect, Vector2, Vector3, Vector4, Color3, StandardMaterial, Material
 } from '@babylonjs/core';
 import { mulberry32, smoothstep } from '../core/rng';
 import { CROSSING, BRIDGE_Y, BARRIER_GHOST_TREE, GROUND_Y } from './layout';
@@ -50,7 +51,11 @@ uniform float ambient;
 uniform vec3 fogColor;
 uniform float fogDensity;
 uniform vec3 cameraPos;
+uniform float voidAmt;
+uniform vec4 white;
+uniform vec2 whiteK;
 float h3(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+${VOID_TONE_GLSL}
 void main(void) {
   float h = h3(vCell);
   float ghost = 0.07 + reveal * 0.5;
@@ -79,7 +84,11 @@ void main(void) {
   }
   float fd = length(cameraPos - vWorld) * fogDensity;
   float fog = clamp(exp(-fd * fd), 0.0, 1.0);
-  gl_FragColor = vec4(mix(fogColor, col, fog), 1.0);
+  vec3 outc = mix(fogColor, col, fog);
+  // Void: solid footing the flame holds is white against the black; the faint traces of
+  // what is not there stay dark (residue on the white, nothing on the black)
+  if (voidAmt > 0.001) outc = mix(outc, rfVoidTone(col, vWorld, white, time, whiteK, solid ? 1.0 : 0.0), voidAmt);
+  gl_FragColor = vec4(outc, 1.0);
 }`;
 
 export interface PhaseUniforms {
@@ -116,6 +125,8 @@ const MOON_DIR = new Vector3(-0.45, -1, 0.55).normalize();
  */
 export class PhaseGeometry {
   private groups: Group[] = [];
+  private white = new Vector4();
+  private whiteK = new Vector2();
   public residue: ParticleField;
   private residueBudget = 0;
   private prevSolid = new Map<Group, number>();
@@ -156,7 +167,7 @@ export class PhaseGeometry {
     const material = new ShaderMaterial(name + 'Mat', this.scene, { vertex: 'phaseSurface', fragment: 'phaseSurface' }, {
       attributes: ['position', 'normal'],
       uniforms: ['world', 'viewProjection', 'solidity', 'flameReveal', 'reveal', 'time', 'baseColor', 'accentColor', 'firePos',
-        'fireIntensity', 'moonDir', 'moonColor', 'ambient', 'fogColor', 'fogDensity', 'cameraPos']
+        'fireIntensity', 'moonDir', 'moonColor', 'ambient', 'fogColor', 'fogDensity', 'cameraPos', 'voidAmt', 'white', 'whiteK']
     });
     material.setColor3('baseColor', base);
     material.setColor3('accentColor', accent);
@@ -302,6 +313,11 @@ export class PhaseGeometry {
       m.setFloat('fogDensity', u.fogDensity);
       m.setFloat('ambient', u.ambient);
       m.setVector3('cameraPos', u.cameraPos);
+      m.setFloat('voidAmt', RealityFX.voidAmount);
+      this.white.set(RealityFX.white.x, RealityFX.white.y, RealityFX.white.z, RealityFX.whiteRadius);
+      m.setVector4('white', this.white);
+      this.whiteK.set(RealityFX.whiteUnstable, RealityFX.whiteDetail);
+      m.setVector2('whiteK', this.whiteK);
     }
     this.residue.update(fieldCtx);
   }

@@ -1,5 +1,5 @@
 import {
-  Scene, Mesh, MeshBuilder, TransformNode, StandardMaterial, Color3, LinesMesh, Vector3, Material
+  Scene, Mesh, MeshBuilder, TransformNode, StandardMaterial, Color3, LinesMesh, Vector3, Material, DynamicTexture
 } from '@babylonjs/core';
 import { Materials } from './Materials';
 import { ThinBatch } from './ThinBatch';
@@ -61,6 +61,7 @@ export class Displaced {
       mesh.rotation.y = h.yaw;
       this.shadowCasters.push(mesh);
       this.occluders.push(mesh);
+      this.addTally(mesh, h.w, h.d, 7 + i);
       if (h.realities !== (h.realities | R_VOID)) {
         this.absentHouse = mesh;
         // Its shadow: stays on the ground when the house has gone
@@ -273,8 +274,43 @@ export class Displaced {
   }
 
   /** voidAmt / derangedAmt: 0..1 how far the world has resolved into each reality. */
+  /**
+   * Notches cut into a door, legible only in Deranged (the recurring mark of the fallen
+   * post, one more on each door). Pale scratches, fading in with the contradiction.
+   */
+  private addTally(house: Mesh, w: number, d: number, count: number): void {
+    const tex = new DynamicTexture('tallyTex' + count, { width: 128, height: 96 }, this.scene, false);
+    const ctx = tex.getContext() as CanvasRenderingContext2D;
+    ctx.clearRect(0, 0, 128, 96);
+    ctx.strokeStyle = 'rgba(225,220,205,0.95)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    const r = mulberry32(count * 31);
+    for (let k = 0; k < count; k++) {
+      const x = 14 + k * 12 + (r() - 0.5) * 3;
+      ctx.beginPath(); ctx.moveTo(x, 18 + r() * 6); ctx.lineTo(x + (r() - 0.5) * 4, 72 + r() * 8); ctx.stroke();
+    }
+    tex.update(); tex.hasAlpha = true;
+    if (!this.tallyMat) {
+      this.tallyMat = new StandardMaterial('tallyMat', this.scene);
+      this.tallyMat.disableLighting = true;
+      this.tallyMat.emissiveColor = new Color3(0.75, 0.72, 0.66);
+      this.tallyMat.useAlphaFromDiffuseTexture = true;
+    }
+    const m = this.tallyMat.clone('tallyMat' + count)!;
+    m.diffuseTexture = tex; m.opacityTexture = tex;
+    const p = MeshBuilder.CreatePlane('doorTally', { width: 0.6, height: 0.45, sideOrientation: Mesh.DOUBLESIDE }, this.scene);
+    p.material = m; p.isPickable = false;
+    p.parent = house; p.position.set(w * 0.18, 0.3 + 1.35, d / 2 + 0.075);
+    p.isVisible = false;
+    this.tallies.push(p);
+    this.meshes.push(p);
+  }
+  private tallies: Mesh[] = [];
+  private tallyMat: StandardMaterial | null = null;
+
   public update(dt: number, voidAmt: number, derangedAmt: number): void {
     this.time += dt;
+    const tk = Math.min(1, Math.max(0, (derangedAmt - 0.3) / 0.6));
+    for (const t of this.tallies) { t.visibility = tk; t.isVisible = tk > 0.01; }
     // The absent house leaves; its shadow does not
     this.absentHouse.visibility = 1 - voidAmt;
     this.absentHouse.isVisible = voidAmt < 0.99;

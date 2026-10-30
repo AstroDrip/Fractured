@@ -52,7 +52,7 @@ export class Anomalies {
     this.homes = new Float32Array(cap * 3);
     this.aligns = new Float32Array(cap * 3);
     this.suspended = new ParticleField(scene, {
-      name: 'suspendedMatter', capacity: cap, blend: 'alpha', life: [0, 0], size: [0.035, 0.12],
+      name: 'suspendedMatter', capacity: cap, blend: 'alpha', shape: 'chip', life: [0, 0], size: [0.035, 0.12],
       colorA: [0.1, 0.1, 0.11, 0.85], colorB: [0.1, 0.1, 0.11, 0.85], drag: 2.0, homeSpring: 1.5,
       noise: { amp: 0.12, freq: 0.8, speed: 0.4 }, fire: { radius: 3.2, strength: -3 }, spin: 0.6, seed: 61,
       behavior: (f, i) => this.suspendedStep(f, i)
@@ -79,7 +79,7 @@ export class Anomalies {
     }
 
     this.motes = new ParticleField(scene, {
-      name: 'motes', capacity: 140, blend: 'alpha', life: [6, 12], size: [0.012, 0.03],
+      name: 'motes', capacity: 140, blend: 'alpha', shape: 'flake', life: [6, 12], size: [0.012, 0.03],
       colorA: [0.6, 0.66, 0.72, 0.3], colorB: [0.6, 0.66, 0.72, 0.3], fadeIn: 0.2, fadeOut: 0.3,
       drag: 0.8, noise: { amp: 0.08, freq: 0.5, speed: 0.25 }, fire: { radius: 3, strength: 0.9 }, spin: 0.5, seed: 62,
       behavior: (f, i, c) => this.moteStep(f, i, c)

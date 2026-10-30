@@ -5,8 +5,7 @@ import { R_VOID } from '../core/Reality';
 import type { RealityId } from '../core/Reality';
 import {
   POIS, PoiDef, HUTS, BARRIER, BARRIER_GHOST_TREE, GAP_NEAR_Z, GAP_FAR_Z, CROSSING, LAMP,
-  RISING_RAIL, START, BED_Y, WALL
-} from './layout';
+  RISING_RAIL, START, BED_Y, WALL, ANCHOR, ATTUNE, WALL_ANCHOR } from './layout';
 
 export interface ChapterInput {
   dt: number;
@@ -18,6 +17,7 @@ export interface ChapterInput {
   voidAmt: number;
   derangedAmt: number;
   onWall: boolean;
+  yardOpen: boolean;       // the signal box's doorway is clear of ash
   fuel: number;
   lightVisible: number;
   watcherVisible: boolean;
@@ -62,6 +62,7 @@ export class ChapterOne {
   private readonly out: ChapterOutput = { focus: null, focusWeight: 0, lookAt: null, inspecting: false, reachedEnd: false, revealShot: false };
   private readonly gapFocus = new Vector3(0, 0.5, (GAP_NEAR_Z + GAP_FAR_Z) / 2);
   private readonly ghostTreeFocus = new Vector3(BARRIER_GHOST_TREE.x, 2, BARRIER_GHOST_TREE.z);
+  private readonly anchorFocus = new Vector3(ANCHOR.lying.x - 0.4, ANCHOR.spur.h, (ANCHOR.lying.z0 + ANCHOR.lying.z1) / 2);
   private readonly poiPos = new Vector3();
   private readonly wallFocus = new Vector3(WALL.x, 4.5, (WALL.z0 + WALL.z1) / 2);
   private revealed2 = false;
@@ -103,6 +104,21 @@ export class ChapterOne {
     if (!firePresent) this.say('refused', 'Nothing answers. My hand is cold.');
   }
 
+  /** Deranged became reachable; the shift is taught where it first works. */
+  public onDerangedUnlocked(stage: number): void {
+    if (stage >= 1) { this.derangedFound = true; this.hud.hideHint(); }
+    if (stage === 3) {
+      this.attuned = true;
+      this.say('attune-pull', 'Back, like the others. Down the whole line, something answered.', 0.3);
+      this.say('attune-wider', 'It does not need something wrong to stand on, now. Only somewhere that allows it.', 4.0);
+      if (!this.hinted.has('anchor-shift')) this.hint('attune-shift', 'T', 'shift', 6.5);
+    }
+  }
+  private derangedFound = false;
+  private attuned = false;
+  /** Deranged ended because the place would not hold it. */
+  public onDerangedLost(): void { this.say('anchor-edge', 'It will not hold, out here.', 0.2); }
+
   public onPhaseSolid(player: Vector3, reality: RealityId): void {
     const nearBarrier = Math.abs(player.z - (BARRIER.z0 + BARRIER.z1) / 2) < 12;
     if (!this.phasedOnce) this.phasedOnce = true;
@@ -110,7 +126,7 @@ export class ChapterOne {
       this.say('void-first', 'Never let the flame go out in the dark.', 0.2);
       if (nearBarrier) this.say('void-tree', 'The tree is gone. Its shadow stayed.', 3.2);
       else this.say('void-thin', 'Everything is thin here. Only what the flame touches stays.', 3.2);
-    } else if (reality === 'deranged') {
+    } else if (reality === 'deranged' && player.z > GAP_FAR_Z) {
       this.say('deranged-first', 'Down is not where it was.', 0.3);
       if (nearBarrier) this.say('ghost-tree', 'The tree is standing. Over there.', 2.5);
       if (player.z > GAP_FAR_Z + 4) this.say('roots', 'The roots are growing up. Toward something.', 4.0);
@@ -146,6 +162,10 @@ export class ChapterOne {
     if (seg && seg.realities !== R_VOID) this.say('fall-normal', 'That piece only holds when I see it plainly.', 0.9);
     else this.say('fall-phased', 'I let go too soon.', 0.9);
     if (this.fallCount === 3) this.say('fall-third', 'One holds when I look. One holds when I do not.', 2.5);
+  }
+
+  public onAshCleared(): void {
+    this.say('ash-cleared', 'It was only ash. It was holding the door shut.', 0.4);
   }
 
   public onBarrierShove(): void {
@@ -252,7 +272,8 @@ export class ChapterOne {
       this.say('pole', 'A pole came down across the line.');
       this.hint('vault', 'Space', 'climb over');
     }
-    if (z > 97 && !this.revealed2) {
+    // On the line only: from the forest the trees would stand in front of it
+    if (z > 97 && Math.abs(p.x) < 4.5 && !this.revealed2) {
       this.revealed2 = true;
       this.out.revealShot = true;
       this.say('landmass', 'That cannot be held up by anything.', 3.0);
@@ -268,7 +289,12 @@ export class ChapterOne {
     if (z > 210 && z < 222) {
       this.say('wall', 'That wall is too clean to have been left standing.');
       if (p.x < WALL.x + 1.6) {
-        if (s.reality !== 'deranged') this.hint('phase-wall', 'Q', 'hold to phase', 2.5, () => !this.said.has('deranged-first'));
+        if (s.reality !== 'deranged' && this.derangedFound) this.hint('shift-wall', 'T', 'shift', 2.5, () => !this.said.has('deranged-first'));
+        // Not found yet (the post was passed by): the footprints are where it is found
+        if (!this.derangedFound && Math.hypot(p.x - WALL_ANCHOR.touch.x, z - WALL_ANCHOR.touch.z) < WALL_ANCHOR.touch.r) {
+          this.say('wall-steps', 'Footprints. They go up the wall, and keep going.', 0.6);
+          this.hint('wall-touch', 'E', 'hold to touch them', 1.6, () => !this.derangedFound);
+        }
         else this.hint('wall-walk', 'A', 'walk into the wall', 0.8);
       }
     }
@@ -279,12 +305,59 @@ export class ChapterOne {
       if (z > 53 && z < 59 && p.x < -11) this.say('cut-trunk', 'It will hold. It held before.', 0.2);
       if (z > 59 && p.x < -11) this.say('cut-water', 'Water. Running the right way, for once.', 0.8);
     }
+    // The first contradiction: the fallen post whose shadow stands
+    const dA = Math.hypot(p.x - ANCHOR.touch.x, z - ANCHOR.touch.z);
+    if (dA < 4.5 && s.reality === 'normal' && !this.derangedFound) {
+      this.say('anchor-see', 'The post is lying down. Its shadow is standing up.', 0.4);
+      if (dA < ANCHOR.touch.r) this.hint('anchor-touch', 'E', 'hold to touch it', 0.8, () => !this.derangedFound);
+    }
+    if (s.reality === 'deranged' && dA < 6) {
+      this.say('anchor-first', 'There. Standing where its shadow said.', 0.3);
+      this.say('anchor-open', 'And where it lay, the way is open.', 3.2);
+      this.hint('anchor-shift', 'T', 'shift back', 7.0, () => s.reality === 'deranged');
+    }
+    // The rift
+    if (p.x < -28.4 && z > 95 && z < 140) {
+      if (p.x > -36) this.say('rift-bridge', 'Someone built this to go somewhere. Half of it went.', 0.5);
+      if (p.x < -36.5 && p.x > -46) this.say('rift-shelf', 'The ground carries on. Just not in the direction it should.', 0.6);
+      if (p.x < -47 && p.x > -55) this.say('rift-slab', 'That piece of the land is standing on its side. It has not fallen. It is waiting.', 0.8);
+      if (p.x < -60) this.say('rift-west', 'Further in, the trees are hanging the wrong way.', 0.8);
+      if (s.reality !== 'void' && p.x > -31 && p.x < -29.5) this.hint('rift-phase', 'Q', 'hold to phase', 2.0, () => !this.said.has('rift-void'));
+      if (s.reality === 'void' && p.x < -30.8 && p.x > -33.4) this.say('rift-void', 'The planks are there. Only here.', 0.3);
+    }
+    // The forest and the cliff
+    if (p.x < -12 && z > 66 && z < 116) {
+      this.say('forest', 'The trees are older than the line. They were here first.', 1.0);
+      if (z > 83 && z < 90 && p.x > -20) {
+        this.say('lattice', 'Roots. Grown up out of the ground and back into it.', 0.4);
+        if (s.reality !== 'void') this.hint('lattice-phase', 'Q', 'hold to phase', 2.5, () => !this.said.has('lattice-void'));
+      }
+      if (s.reality === 'void' && z > 85 && z < 91) this.say('lattice-void', 'Nothing holds them up here.', 0.4);
+      if (z > 104 && p.x < -24) this.say('overlook', 'The ground just stops. Everything else is still out there.', 0.6);
+    }
+    // The signal yard
+    if (p.x > 3.6 && z > 158 && z < 176) {
+      this.say('yard', 'A platform. Nobody waited here for a long time.', 0.6);
+      // The last lever, once the doorway is open and it has been looked at
+      if (s.yardOpen && !this.attuned && this.examined.has('levers') && Math.hypot(p.x - ATTUNE.touch.x, z - ATTUNE.touch.z) < ATTUNE.touch.r) {
+        this.hint('lever-pull', 'E', 'hold to pull the last one', 0.6, () => !this.attuned);
+      }
+      if (Math.abs(z - 168) < 3 && p.x > 5.5) {
+        this.say('yard-ash', 'Ash, packed into the doorway. Deliberately.', 0.4);
+        if (s.firePresent) this.hint('yard-throw', 'R', 'hold to gather more, then let it go', 2.0, () => !this.said.has('ash-cleared'));
+      }
+    }
     // The village: the same house, more than once
     if (p.x > 9 && z > 127 && z < 146) {
       this.say('village', 'The same house. Again. And again.');
       if (p.x > 12) this.say('village-up', 'Do not look up for too long.', 4.0);
       if (s.reality === 'void' && p.x > 11) this.say('village-shadow', 'It left. Its shadow did not.', 0.6);
       if (s.reality !== 'void' && p.x > 11 && z > 139) this.hint('village-void', 'Q', 'hold to phase', 3.0, () => !this.said.has('village-path'));
+    }
+    // The village in Deranged: marks on every door, the same as the post's
+    if (s.reality === 'deranged' && p.x > 12 && z > 126 && z < 145) {
+      if (this.examined.has('notches')) this.say('village-tally', 'The same notches as the post. One more on every door.', 0.6);
+      else this.say('village-tally', 'Marks cut into every door. Counting something.', 0.6);
     }
     if (s.reality === 'void' && p.x > 5 && z > 143 && z < 157) this.say('village-path', 'There was a way across. There was always a way across.');
     // The hound
@@ -324,6 +397,8 @@ export class ChapterOne {
     // The last stretch is composed around the lamp and the line continuing past it
     if (z > LAMP.z - 18) { focus = this.lampFocus; weight = 0.9; }
     if (this.said.has('ghost-tree') && s.reality === 'deranged' && Math.abs(z - bz) < 10) { focus = this.ghostTreeFocus; weight = 0.4; }
+    // The fallen post and the shadow it should not have: drawn toward while it is unexplained
+    if (!this.derangedFound && Math.hypot(p.x - ANCHOR.touch.x, z - ANCHOR.touch.z) < 7) { focus = this.anchorFocus; weight = 0.35; }
     if (s.reality === 'deranged' && z > WALL.z0 && z < WALL.z1) { focus = this.wallFocus; weight = 0.45; }
     if (!focus && s.anomalyFocus && s.resonance > 0.25) { focus = s.anomalyFocus; weight = 0.35 * s.resonance; }
     this.out.focus = focus;
@@ -348,6 +423,7 @@ export class ChapterOne {
   public reset(): void {
     this.said.clear(); this.examined.clear(); this.hinted.clear(); this.delayed = [];
     this.time = 0; this.stillTime = 0; this.edgeTime = 0; this.inspectTimer = 0;
+    this.derangedFound = false; this.attuned = false;
     this.barrierApproachedFromNear = false; this.currentPoi = null; this.fallCount = 0;
     this.revealed = false; this.phasedOnce = false; this.firePresentSince = -1; this.ended = false;
     this.out.reachedEnd = false;

@@ -21,7 +21,7 @@ export const PATH: Pt[] = [
   { x: -25.5, z: -5.5 }, { x: -20, z: -2.5 }, { x: -14.5, z: 2.5 },
   { x: -9.5, z: 7.5 }, { x: -5.5, z: 11.5 }, { x: -2, z: 15 }, { x: 0, z: 17 }
 ];
-export const PATH_RADIUS = 1.3;
+export const PATH_RADIUS = 3.0;   // the open ground either side of the trodden line is walkable too
 export const START_CLEARING_RADIUS = 3.2;
 
 export const TRACK_HALF_WIDTH = 3.5;   // walkable shoulders
@@ -54,10 +54,10 @@ export const CROSSING: CrossingSegment[] = [
 export const BARRIER = { z0: 149.0, z1: 151.6, recovery: { x: 0, z: 147.6 }, realities: R_NORMAL | R_DERANGED };
 export const BARRIER_GHOST_TREE = { x: 6.2, z: 150.5 }; // in Deranged the same tree also stands, upright
 
-// Which reality a held phase leads to, by region. The near side fractures toward
-// Void; past the gap the world fractures toward Deranged.
+// The reality a region fractures toward on the line itself (see REALITY_REGIONS):
+// Void on the near side of the gap, Deranged past it.
 export function phaseTargetAt(z: number): RealityId {
-  return z < GAP_FAR_Z + 2 ? 'void' : 'deranged';
+  return realityRegionAt(0, z).void ? 'void' : 'deranged';
 }
 
 // Vantage points: stretches where the camera lowers, stands back and turns down the
@@ -244,7 +244,7 @@ export const TREES: { x: number; z: number; scale: number; variant: number }[] =
   { x: -14.9, z: 44.5, scale: 1.2, variant: 0 }, { x: -17.4, z: 52.4, scale: 1.0, variant: 1 },
   { x: -15.2, z: 64.5, scale: 1.3, variant: 2 }, { x: -18.0, z: 59.6, scale: 0.9, variant: 0 },
   { x: 6.8, z: 62, scale: 1.35, variant: 2 }, { x: -6.5, z: 140, scale: 1.1, variant: 0 },
-  { x: 7.2, z: 160, scale: 1.0, variant: 2 }
+  { x: 12.5, z: 158.5, scale: 1.0, variant: 2 }
 ];
 
 export const FENCE_RUNS: { from: Pt; to: Pt; broken: number[] }[] = [
@@ -269,7 +269,7 @@ export const FIGURE = { x: 1.6, z: GAP_FAR_Z + 4 };  // figure seen across the g
 export const RISING_RAIL = { z0: 250, z1: 262 }; // right rail leaves the ground here
 export const PUDDLES: Pt[] = [
   { x: 5.6, z: 30 }, { x: -5.4, z: 66 }, { x: 5.8, z: 101 }, { x: -5.6, z: 124 },
-  { x: 5.5, z: 170 }, { x: -5.2, z: 220 }, { x: 5.5, z: 268 }
+  { x: -5.5, z: 172 }, { x: -5.2, z: 220 }, { x: 5.5, z: 268 }
 ];
 
 // --- Points of interest (E to examine) -------------------------------------
@@ -281,6 +281,18 @@ export const POIS: PoiDef[] = [
   { id: 'suitcase', x: FENCE_POCKET.x, z: FENCE_POCKET.z, radius: 1.8, lines: [
     'Packed with earth. Pressed in, to the corners.',
     'Someone wanted it to be heavy.'] },
+  { id: 'levers', x: 10.6, z: 168, radius: 1.8, lines: [
+    'Every lever pulled back. All but one.',
+    'Someone was still sending something down the line.'] },
+  { id: 'rift-sleepers', x: -42.5, z: 127.5, radius: 2.2, lines: [
+    'Railway sleepers, set upright into the rock. A fence around nothing.',
+    'The rock grew around them.'] },
+  { id: 'notches', x: -15.2, z: 61.35, radius: 1.0, lines: [
+    'Notches cut into the post, at the height of my hand.',
+    'I know how many there are before I count them.'] },
+  { id: 'coat', x: -25.2, z: 83.2, radius: 2.4, lines: [
+    'A coat on a branch, buttoned, as if someone were still in it.',
+    'It is my size.'] },
   { id: 'boot', x: BOOT.x + 0.9, z: BOOT.z + 0.6, radius: 2.4, lines: [
     'Set down carefully. No mud on it.',
     'No mud anywhere near it.'] },
@@ -316,6 +328,12 @@ export function walkDistance(x: number, z: number): number {
   }
   // The hollow beyond the broken fence
   d = Math.min(d, Math.hypot(x - FENCE_POCKET.x, z - FENCE_POCKET.z) - FENCE_POCKET.r);
+  // The signal yard
+  const yp = YARD.platform, yb = YARD.box;
+  if (x > yp.x0 - 0.5 && x < yb.x1 + 0.5 && z > yp.z0 - 0.5 && z < yp.z1 + 0.5) d = Math.min(d, 0);
+  // The forest walkways
+  const fb = FOREST.bounds;
+  if (x > fb.x0 && x < fb.x1 && z > fb.z0 && z < fb.z1) d = Math.min(d, forestAt(x, z).d);
   // The cutting
   const cb = CUTTING.bounds;
   if (x > cb.x0 && x < cb.x1 && z > cb.z0 && z < cb.z1) d = Math.min(d, cuttingAt(x, z).d - CUTTING.radius);
@@ -384,6 +402,23 @@ export const CUTTING = {
   rails: { x: -14.4, z0: 47.5, z1: 52.6 }                          // a length of track running into the rock
 };
 
+// The first contradiction, at the cutting's end shelf before the forest path. A signal
+// post lies across the mouth of a short ledge in the face; its shadow is the shadow of a
+// post standing upright at the ledge's far end. Touched, the world shifts to Deranged:
+// the post stands where its shadow said, the mouth is clear, and the shadow on the ground
+// is now the shadow of a post lying down. The ledge exists only in Deranged (its cells),
+// so Normal can never close on someone inside it: the shift holds until they step out.
+export const ANCHOR = {
+  spur: { a: { x: -13.0, z: 61.0 }, b: { x: -15.8, z: 61.4 }, r: 0.9, h: GROUND_Y + 1.75 },
+  lying: { x: -14.65, z0: 60.0, z1: 62.6 },         // the post across the mouth (Normal)
+  standing: { x: -15.5, z: 61.35 },                 // where its shadow says it stands
+  shadowTip: { x: -11.0, z: 61.6 },                 // its shadow runs out across the path to here
+  touch: { x: -13.9, z: 61.2, r: 1.5 },             // standing here, hold examine
+  region: { x0: -16.6, x1: -10.4, z0: 58.8, z1: 63.9 }
+};
+/** Distance from the anchor ledge's centre line. */
+export const anchorSpurDist = (x: number, z: number) => segDist(x, z, ANCHOR.spur.a, ANCHOR.spur.b);
+
 /** The cutting route as segments, for distance and height queries. */
 export function cuttingAt(x: number, z: number): { d: number; h: number } {
   const r = CUTTING.route;
@@ -401,3 +436,203 @@ export function cuttingAt(x: number, z: number): { d: number; h: number } {
 /** True on the trunk bridge (narrow walking). */
 export const onCuttingBridge = (x: number, z: number) =>
   z > CUTTING.bridge.z0 && z < CUTTING.bridge.z1 && Math.abs(x - CUTTING.bridge.x) <= CUTTING.bridge.halfWidth;
+
+// --- The signal yard: industrial remains east of the line before the edge -------------
+// A raised platform along the line, a signal box whose doorway is choked with ash (a
+// fireball or a full mass clears it; a flick does not), a lever frame inside, and a
+// steel gantry whose beam runs through the box's roof at an angle nothing was built at.
+export const YARD = {
+  platform: { x0: 3.5, x1: 7.2, z0: 157.5, z1: 176.5, h: 0.35, ramp: 1.6 },
+  box: { x0: 8.0, x1: 12.4, z0: 165.4, z1: 170.6, h: 3.4, wall: 0.3 },
+  door: { z0: 167.2, z1: 168.8 },                      // in the west wall (x = box.x0)
+  ash: { x0: 7.15, x1: 8.35, z0: 167.15, z1: 168.85, h: 0.9 },
+  levers: { x: 11.2, z: 168 },
+  gantry: { x0: -4.6, x1: 14.5, z: 172.5, h: 6.2 }
+};
+
+// --- The forest and the cliff (north-west of the cutting) ---------------------------
+// From the north end of the cutting's shelf a path climbs north-west under the trees,
+// is barred by a lattice of roots and a fallen trunk (matter: gone in Void), rises to an
+// overlook on the cliff edge (x -28: the land ends; the world falls away westward) and
+// comes down east to the line before the sleeper pile. A side path leads to a clearing.
+// Heights are absolute (GROUND_Y-relative values written out).
+export const FOREST = {
+  route: [
+    { x: -12.8, z: 61.0, h: GROUND_Y + 1.85 }, { x: -14.6, z: 66.5, h: GROUND_Y + 1.9 },
+    { x: -17.0, z: 73.0, h: GROUND_Y + 1.6 }, { x: -18.0, z: 80.0, h: GROUND_Y + 1.4 },
+    { x: -17.2, z: 86.0, h: GROUND_Y + 1.4 }, { x: -17.0, z: 90.5, h: GROUND_Y + 1.45 },
+    { x: -20.5, z: 97.0, h: GROUND_Y + 2.2 }, { x: -23.6, z: 103.0, h: GROUND_Y + 3.3 },
+    { x: -26.0, z: 108.2, h: GROUND_Y + 4.2 }
+  ] as HPt[],
+  exit: [
+    { x: -23.6, z: 103.0, h: GROUND_Y + 3.3 }, { x: -18.5, z: 106.5, h: GROUND_Y + 2.6 },
+    { x: -12.0, z: 110.0, h: GROUND_Y + 1.4 }, { x: -6.5, z: 113.0, h: GROUND_Y + 0.6 },
+    { x: -3.0, z: 114.6, h: GROUND_Y }
+  ] as HPt[],
+  spur: [
+    { x: -18.0, z: 80.0, h: GROUND_Y + 1.4 }, { x: -22.0, z: 81.5, h: GROUND_Y + 1.3 },
+    { x: -25.0, z: 83.0, h: GROUND_Y + 1.25 }
+  ] as HPt[],
+  radius: 1.4,
+  clearing: { x: -25.2, z: 83.2, r: 2.6 },          // optional: the coat on the branch
+  overlook: { x: -26.4, z: 109.0, r: 2.3 },
+  edgeX: -28.4,                                       // west of this the land ends
+  lattice: { x0: -19.6, x1: -14.6, z0: 86.6, z1: 89.0 },   // roots + fallen trunk across the path
+  bounds: { x0: -32, x1: -4.2, z0: 60, z1: 127 },
+  bridge: { x: -27.6, z: 109.4 }                      // a footbridge that ends in the fog
+};
+
+function polyAt(route: HPt[], x: number, z: number): { d: number; h: number } {
+  let best = Infinity, bh = GROUND_Y;
+  for (let i = 0; i < route.length - 1; i++) {
+    const a = route[i], b = route[i + 1];
+    const dx = b.x - a.x, dz = b.z - a.z, l2 = dx * dx + dz * dz;
+    const t = Math.max(0, Math.min(1, ((x - a.x) * dx + (z - a.z) * dz) / l2));
+    const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+    if (d < best) { best = d; bh = a.h + (b.h - a.h) * t; }
+  }
+  return { d: best, h: bh };
+}
+
+/** Nearest forest walkway (route, exit, spur, clearing, overlook): distance to its edge and its height. */
+export function forestAt(x: number, z: number): { d: number; h: number } {
+  let best = { d: Infinity, h: GROUND_Y };
+  for (const r of [FOREST.route, FOREST.exit, FOREST.spur, RIFT.ridgeEast]) {
+    const q = polyAt(r, x, z); q.d -= FOREST.radius;
+    if (q.d < best.d) best = q;
+  }
+  for (const c of [FOREST.clearing, FOREST.overlook]) {
+    const d = Math.hypot(x - c.x, z - c.z) - c.r;
+    if (d < best.d) best = { d, h: polyAt(c === FOREST.overlook ? FOREST.route : FOREST.spur, c.x, c.z).h };
+  }
+  return best;
+}
+
+// --- The rift: the vertical, fractured land west of the overlook ---------------------
+// Over the footbridge (its middle exists only in Void) to an upper shelf; down a cut in
+// the ravine's east wall to a lower shelf; over a fallen trunk across the chasm to a west
+// shelf; up a ridge out of the ravine's north end and east, back to the forest's exit
+// path. A slab of earth hangs almost upright over the chasm. Heights are absolute.
+// One height function (riftHeight) shapes the continuous terrain mesh, the walk grid and
+// what a thrown flame touches, so what is seen is what is walked on.
+export const RIFT = {
+  bounds: { x0: -80, x1: -28.4, z0: 92, z1: 140 },
+  bridge: { x0: -36.0, x1: -28.4, z: 109.4, h: GROUND_Y + 4.1, halfWidth: 0.78, void0: -33.4, void1: -30.8 },
+  upper: { x0: -46, x1: -36, z0: 101, z1: 121, h: GROUND_Y + 4.2 },
+  lower: { x0: -54.6, x1: -50, z0: 100, z1: 117, h: GROUND_Y - 2.1 },
+  chasm: { x0: -60, x1: -54.6, z0: 95, z1: 126, floor: -16 },
+  west: { x0: -73, x1: -60, z0: 97, z1: 124, h: GROUND_Y - 1.1 },
+  trunk: { x0: -60.6, x1: -54.2, z: 103.2, h0: GROUND_Y - 2.1, h1: GROUND_Y - 1.1, halfWidth: 0.45 },
+  descent: [
+    { x: -44.8, z: 103.5, h: GROUND_Y + 4.2 }, { x: -47.2, z: 109.5, h: GROUND_Y + 2.2 },
+    { x: -48.6, z: 115.5, h: GROUND_Y + 0.3 }, { x: -51.2, z: 113.0, h: GROUND_Y - 2.1 }
+  ] as HPt[],
+  ridge: [
+    { x: -64.0, z: 122.5, h: GROUND_Y - 1.1 }, { x: -61.0, z: 129.0, h: GROUND_Y + 0.8 },
+    { x: -54.0, z: 133.0, h: GROUND_Y + 2.6 }, { x: -45.0, z: 134.0, h: GROUND_Y + 3.7 },
+    { x: -36.0, z: 131.0, h: GROUND_Y + 4.0 }, { x: -28.4, z: 124.5, h: GROUND_Y + 3.4 }
+  ] as HPt[],
+  // Continues inside the forest's ground east of the edge, down to its exit path
+  ridgeEast: [
+    { x: -28.4, z: 124.5, h: GROUND_Y + 3.4 }, { x: -24.5, z: 118.0, h: GROUND_Y + 2.9 },
+    { x: -18.5, z: 106.5, h: GROUND_Y + 2.6 }
+  ] as HPt[],
+  promontory: { x: -42.5, z: 127.5, r: 1.8, path: [{ x: -41.0, z: 120.5 }, { x: -42.5, z: 127.0 }] },
+  pathRadius: 1.25,
+  slab: { x: -57.4, y: 10.5, z: 111.0 },          // the landmark, hanging over the chasm
+  masses: [{ x: -57.8, y: 6.0, z: 99.0, s: 1.0 }, { x: -56.8, y: 8.5, z: 121.5, s: 0.8 }]
+};
+
+/** Height of the rift's ground at (x, z), or null where there is none (the chasm, under the bridge). */
+export function riftHeight(x: number, z: number): number | null {
+  const R = RIFT;
+  const n = Math.sin(x * 0.7 + z * 0.4) * 0.12 + Math.sin(z * 1.3 - x * 0.5) * 0.08;
+  // Walkways carved through whatever they pass
+  for (const route of [R.descent, R.ridge]) {
+    const q = polyAt(route, x, z);
+    if (q.d < R.pathRadius) return q.h;
+    if (q.d < R.pathRadius + 1.2) return q.h + (q.d - R.pathRadius) * 0.4 + n;   // the cut's lip
+  }
+  const pr = R.promontory;
+  const dp = Math.min(Math.hypot(x - pr.x, z - pr.z) - pr.r, segDist(x, z, pr.path[0], pr.path[1]) - R.pathRadius);
+  if (dp < 0) return R.upper.h;
+  const north = z > 124, south = z < 98;
+  // The gap the bridge spans, and the chasm: no ground
+  if (x > R.bridge.x0 && x <= R.bounds.x1 && z > 99 && z < 120) return null;
+  if (x > R.chasm.x0 && x < R.chasm.x1 && z > R.chasm.z0 && z < R.chasm.z1) return null;
+  if (north) return R.upper.h - 0.6 + n * 2 + Math.max(0, (z - 126) * 0.25);        // the ravine closes: high rough ground
+  if (south) return R.upper.h - 1.2 + n * 2 + (98 - z) * 0.35;
+  if (x > R.upper.x0) return R.upper.h + n;                                           // the upper shelf
+  if (x > R.lower.x1) {                                                                // the east wall: a cliff
+    const t = (R.upper.x0 - x) / (R.upper.x0 - R.lower.x1);
+    return R.upper.h + (R.lower.h - R.upper.h) * Math.pow(t, 0.7) + n * 3;
+  }
+  if (x > R.chasm.x1) return R.lower.h + n;                                           // the lower shelf
+  if (x > R.west.x0) return R.west.h + n * 1.5;                                       // the west shelf
+  return R.west.h + (R.west.x0 - x) * 0.9 + n * 3;                                     // the far wall
+}
+
+/** Walkable rift ground at (x, z): the shelves (inset from their edges), paths, trunk, bridge. */
+export function riftWalk(x: number, z: number): { h: number; narrow: boolean; voidOnly: boolean } | null {
+  const R = RIFT, b = R.bridge, t = R.trunk;
+  if (x > b.x0 - 0.5 && x < b.x1 + 0.6 && Math.abs(z - b.z) <= b.halfWidth) {
+    return { h: b.h, narrow: true, voidOnly: x > b.void0 && x < b.void1 };
+  }
+  if (x > t.x0 && x < t.x1 && Math.abs(z - t.z) <= t.halfWidth) {
+    const k = (t.x1 - x) / (t.x1 - t.x0);
+    return { h: t.h0 + (t.h1 - t.h0) * k + 0.2, narrow: true, voidOnly: false };
+  }
+  const h = riftHeight(x, z);
+  if (h === null) return null;
+  for (const route of [R.descent, R.ridge]) if (polyAt(route, x, z).d < R.pathRadius) return { h, narrow: false, voidOnly: false };
+  const pr = R.promontory;
+  if (Math.min(Math.hypot(x - pr.x, z - pr.z) - pr.r, segDist(x, z, pr.path[0], pr.path[1]) - R.pathRadius) < 0) return { h, narrow: false, voidOnly: false };
+  const inset = (r: { x0: number; x1: number; z0: number; z1: number }, m: number) => x > r.x0 + m && x < r.x1 - m && z > r.z0 + m && z < r.z1 - m;
+  if (inset(R.upper, 0.6) || inset(R.lower, 0.5) || inset(R.west, 0.6)) return { h, narrow: false, voidOnly: false };
+  return null;
+}
+
+// --- Which realities each region allows -----------------------------------------------
+// Global progression decides what the protagonist has discovered (DerangedStage); the
+// region decides what can be entered here. Both must agree. Normal is always available.
+// First match wins, so the forest and the rift stay Normal / Void whatever is unlocked.
+//   void      the phase (hold) leads to Void here
+//   deranged  the Deranged shift (toggle) works here once progression has reached this
+//             stage; false: never here
+export type DerangedStage = 0 | 1 | 2 | 3;   // 0 none, 1 first contradiction, 2 controlled, 3 attuned
+export interface RealityRegion {
+  id: string;
+  contains: (x: number, z: number) => boolean;
+  void: boolean;
+  deranged: DerangedStage | false;
+}
+const VILLAGE_REALITIES = { x0: 9, x1: 26, z0: 125, z1: 145.5 };
+// For anyone who never touched the fallen post: the wall's footprints are the anchor.
+// Holding examine at its foot finds Deranged there (no unlock without an anchor).
+export const WALL_ANCHOR = { touch: { x: -4.2, z: 219.5, r: 2.0 } };
+// The attunement: the one lever still forward in the signal box. Held, it is pulled back,
+// and Deranged answers in more places (stage 3).
+export const ATTUNE = {
+  touch: { x: 10.6, z: 168, r: 1.6 },
+  region: { x0: -5, x1: 13, z0: 157, z1: 181.5 }
+};
+const inBox = (b: { x0: number; x1: number; z0: number; z1: number }) => (x: number, z: number) => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1;
+export const REALITY_REGIONS: RealityRegion[] = [
+  // The first contradiction: Normal / Deranged around the fallen post only
+  { id: 'anchor1', contains: (x, z) => inBox(ANCHOR.region)(x, z), void: false, deranged: 1 },
+  // The village of one house: every reality, once Deranged has been found (stage 2 in the
+  // design: further authored places, the player decides when to look)
+  { id: 'village', contains: (x, z) => inBox(VILLAGE_REALITIES)(x, z), void: true, deranged: 1 },
+  // The yard and the line to the edge: Deranged only after the last lever (attunement)
+  { id: 'yardLine', contains: (x, z) => inBox(ATTUNE.region)(x, z), void: true, deranged: 3 },
+  { id: 'rift', contains: (x, z) => inBox(RIFT.bounds)(x, z), void: true, deranged: false },
+  { id: 'forest', contains: (x, z) => inBox(FOREST.bounds)(x, z), void: true, deranged: false },
+  // The near side of the gap fractures toward absence
+  { id: 'near', contains: (_x, z) => z < GAP_FAR_Z + 2, void: true, deranged: false },
+  // Past the gap the world contradicts itself: the wall, the facade, the den
+  { id: 'beyond', contains: () => true, void: false, deranged: 1 }
+];
+export function realityRegionAt(x: number, z: number): RealityRegion {
+  for (const r of REALITY_REGIONS) if (r.contains(x, z)) return r;
+  return REALITY_REGIONS[REALITY_REGIONS.length - 1];
+}

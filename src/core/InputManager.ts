@@ -1,5 +1,5 @@
 import { Vector2, Vector3, Scene, Camera } from '@babylonjs/core';
-import { BINDINGS, Action } from './controls';
+import { BINDINGS, Action, PAD_BUTTONS, PAD } from './controls';
 import { GROUND_Y } from '../world/layout';
 
 export type InputDevice = 'keyboard' | 'touch';
@@ -26,6 +26,10 @@ export class InputManager {
   private codeToAction = new Map<string, Action>();
   private clickTarget: Vector3 | null = null;
   private rightMouse = false;
+  // Gamepad state, read in poll()
+  private padHeld = new Set<Action>();
+  private padMove = new Vector2();
+  public padSlow = false;
 
   // Virtual (touch) state
   private vMove = new Vector2();
@@ -124,7 +128,7 @@ export class InputManager {
   // --- Reading intents --------------------------------------------------------
 
   public isHeld(action: Action): boolean {
-    if (this.vHeld.has(action)) return true;
+    if (this.vHeld.has(action) || this.padHeld.has(action)) return true;
     if (action === 'gather' && this.rightMouse) return true;
     for (const code of BINDINGS[action]) if (this.held.has(code)) return true;
     return false;
@@ -139,8 +143,27 @@ export class InputManager {
     return t;
   }
 
+  /** Gamepad buttons and stick, with the same press / release edges as keys. */
+  private pollPad(): void {
+    const pads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
+    let pad: Gamepad | null = null;
+    for (const p of pads) if (p && p.connected) { pad = p; break; }
+    const now = new Set<Action>();
+    this.padMove.set(0, 0);
+    if (pad) {
+      pad.buttons.forEach((b, i) => { const a = PAD_BUTTONS[i]; if (a && (b.pressed || b.value > 0.5)) now.add(a); });
+      const ax = pad.axes[0] ?? 0, ay = pad.axes[1] ?? 0;
+      if (Math.hypot(ax, ay) > PAD.deadzone) this.padMove.set(ax, ay);
+    }
+    for (const a of now) if (!this.padHeld.has(a)) { this.pressed.add(a); this.setDevice('keyboard'); }
+    const before = [...this.padHeld];
+    this.padHeld = now;
+    for (const a of before) if (!now.has(a) && !this.isHeld(a)) this.released.add(a);
+  }
+
   /** Call once per frame before reading input. */
   public poll(): void {
+    this.pollPad();
     let x = 0, y = 0;
     if (this.isHeld('left')) x -= 1;
     if (this.isHeld('right')) x += 1;
@@ -153,6 +176,14 @@ export class InputManager {
       const m = Math.min(1, Math.hypot(this.vMove.x, this.vMove.y));
       this.moveMagnitude = m;
       x = m > 0 ? this.vMove.x / m : 0; y = m > 0 ? this.vMove.y / m : 0;
+    }
+    this.padSlow = false;
+    if (this.padMove.x !== 0 || this.padMove.y !== 0) {
+      const m = Math.min(1, Math.hypot(this.padMove.x, this.padMove.y));
+      x = this.padMove.x / m; y = this.padMove.y / m;
+      this.moveMagnitude = m;
+      this.padSlow = m < PAD.slowBelow;
+      this.setDevice('keyboard');
     }
     this.moveVector.set(x, y);
   }

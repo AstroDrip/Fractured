@@ -2,13 +2,14 @@ import {
   Scene, Mesh, MeshBuilder, Vector3, Quaternion, Color3, PointLight, LinesMesh
 , StandardMaterial
 } from '@babylonjs/core';
-import { mulberry32, smoothstep } from '../core/rng';
+import { mulberry32, smoothstep, fbm2 } from '../core/rng';
 import { ThinBatch } from './ThinBatch';
+import { grassClump, grassColor, GrassKind } from './Grass';
 import { Materials } from './Materials';
 import { Terrain } from './Terrain';
 import { WalkGrid } from './WalkGrid';
 import {
-  polePositions, GROUNDED_CABLE_POLE_Z, SIGNS, HUTS, TREES, FENCE_RUNS, FENCE_POCKET, BOOT, LAMP, PUDDLES,
+  polePositions, GROUNDED_CABLE_POLE_Z, SIGNS, HUTS, TREES, FENCE_RUNS, FENCE_POCKET, FOREST, BOOT, LAMP, PUDDLES,
   FOOTPRINTS_TO_EDGE, FOOTPRINTS_RETURNING, BARRIER, GAP_NEAR_Z, GAP_FAR_Z,
   WORLD_END_Z, GROUND_Y, BED_Y, walkDistance, inGap
 } from './layout';
@@ -262,6 +263,8 @@ export class Props {
       const density = z < 70 ? 0.55 : z < GAP_NEAR_Z ? 0.3 : 0.12;
       if (this.rnd() > density) continue;
       if (HUTS.some(h => Math.hypot(h.x - x, h.z - z) < 4)) continue;
+      const fb = FOREST.bounds;
+      if (x > fb.x0 - 6 && x < fb.x1 && z > fb.z0 && z < fb.z1) continue;   // the authored forest
       place(x, z, 0.8 + this.rnd() * 0.7, Math.floor(this.rnd() * 3));
     }
     // Distant tree lines rising out of the fog beyond the playable land
@@ -281,38 +284,47 @@ export class Props {
   // --- Ground detail -------------------------------------------------------
 
   private buildGrassAndStones(): void {
-    const blades: Mesh[] = [];
-    const br = mulberry32(55);
-    for (let i = 0; i < 11; i++) {
-      const h = 0.22 + br() * 0.34;
-      const b = MeshBuilder.CreateBox('blade', { width: 0.028, height: h, depth: 0.008 }, this.scene);
-      const a = br() * Math.PI * 2, r = br() * 0.09;
-      const tilt = 0.15 + br() * 0.45;
-      b.position.set(Math.cos(a) * r + Math.cos(a) * Math.sin(tilt) * h * 0.5, Math.cos(tilt) * h * 0.5, Math.sin(a) * r + Math.sin(a) * Math.sin(tilt) * h * 0.5);
-      b.rotation.set(Math.sin(a) * tilt, a, -Math.cos(a) * tilt);
-      blades.push(b);
-    }
-    const clump = Mesh.MergeMeshes(blades, true, true)!;
-    clump.material = this.mats.grass;
-    const grass = new ThinBatch(clump);
+    // The grass family (Grass.ts): two shape variants per kind, placed in patches. Broad
+    // low-frequency noise decides what grows where: tufts are the common cover, tall
+    // blades stand out of them here and there, straw-dead patches gather near the line
+    // and on dry rises, dark sedge in wet ditches and hollows. Density follows a second,
+    // finer patch field so grass grows in groups with bare earth between.
+    const kinds: GrassKind[] = ['tuft', 'tall', 'dead', 'sedge'];
+    const batches = new Map<GrassKind, ThinBatch[]>();
+    kinds.forEach((k, ki) => batches.set(k, [0, 1].map(v => {
+      const m = grassClump(this.scene, k, 401 + ki * 17 + v * 5);
+      m.material = this.mats.grass;
+      return new ThinBatch(m);
+    })));
     const stones = new ThinBatch(MeshBuilder.CreateBox('stoneBase', { size: 1 }, this.scene));
     stones.mesh.material = this.mats.stone;
 
-    for (let i = 0; i < 16000; i++) {
+    for (let i = 0; i < 30000; i++) {
       const x = -46 + this.rnd() * 74, z = -22 + this.rnd() * 330;
       const h = this.terrain.heightAt(x, z);
       if (h < -100) continue;
       const d = walkDistance(x, z);
       if (d < -0.4) continue;                         // keep the walking line clear
-      if (d < 0.2 && this.rnd() < 0.7) continue;
+      if (d < 0.2 && this.rnd() < 0.8) continue;
       if (this.rnd() > Math.exp(-Math.max(0, d) / 7)) continue;   // densest where the camera looks
+      // Grouped: a patch field with bare ground between
+      const patch = fbm2(x * 0.22, z * 0.22, 71);
+      if (patch < 0.34 || this.rnd() > 0.35 + (patch - 0.34) * 4) continue;
       const far = z > GAP_FAR_Z;
       if (far && this.rnd() < 0.55) continue;         // the far side is barer
-      const s = 0.6 + this.rnd() * 0.8;
-      const straw = this.rnd();
-      const r = far ? 0.3 : 0.22 + straw * 0.1, g = far ? 0.31 : 0.2 + straw * 0.07, b = far ? 0.33 : 0.13 + straw * 0.03;
-      grass.add(x, h, z, this.rnd() * 6.28, (this.rnd() - 0.5) * 0.25, (this.rnd() - 0.5) * 0.25, s, s * (0.7 + this.rnd() * 0.6), s, r, g, b);
+      const zone = fbm2(x * 0.06, z * 0.06, 73);
+      const wet = h < GROUND_Y - 0.12;
+      let kind: GrassKind = 'tuft';
+      if (wet) kind = 'sedge';
+      else if (d < 2.2 && this.rnd() < 0.45 || zone > 0.6) kind = 'dead';
+      else if (this.rnd() < 0.12 + (zone < 0.4 ? 0.12 : 0)) kind = 'tall';
+      const b = batches.get(kind)![this.rnd() < 0.5 ? 0 : 1];
+      const s = (kind === 'tall' ? 0.85 : 0.75) + this.rnd() * 0.55;
+      const [r, g, bl] = grassColor(kind, this.rnd(), far ? 0.7 : 0);
+      b.add(x, h - 0.01, z, this.rnd() * 6.28, (this.rnd() - 0.5) * 0.12, (this.rnd() - 0.5) * 0.12,
+        s, s * (0.75 + this.rnd() * 0.5), s, r, g, bl);
     }
+    for (const list of batches.values()) for (const b of list) if (b.count > 0) this.meshes.push(b.commit());
     for (let i = 0; i < 520; i++) {
       const x = -46 + this.rnd() * 74, z = -22 + this.rnd() * 330;
       const h = this.terrain.heightAt(x, z);
@@ -322,7 +334,7 @@ export class Props {
       stones.add(x, h + s * 0.2, z, this.rnd() * 6.28, (this.rnd() - 0.5) * 0.5, (this.rnd() - 0.5) * 0.5,
         s * (1 + this.rnd()), s * 0.6, s * (0.8 + this.rnd() * 0.6), t, t, t);
     }
-    this.meshes.push(grass.commit(), stones.commit());
+    this.meshes.push(stones.commit());
   }
 
   /** The hollow beyond the broken fence: an open suitcase packed with earth. */

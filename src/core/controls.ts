@@ -10,7 +10,8 @@ export const BINDINGS = {
   jump: ['Space'],         // hop, or vault a low obstacle ahead
   fire: ['KeyF'],          // open / close the hand
   gather: ['KeyR'],        // hold to gather the fire, release to let it go (also right mouse)
-  phase: ['KeyQ'],         // hold to phase
+  phase: ['KeyQ'],         // hold to phase (Void)
+  shift: ['KeyT'],         // tap to shift Normal / Deranged, where the world allows it
   inspect: ['KeyE'],
   pause: ['Escape', 'KeyP'],
   // Virtual actions raised only by the touch layer (no keys)
@@ -20,6 +21,24 @@ export const BINDINGS = {
 
 export type Action = keyof typeof BINDINGS;
 
+/**
+ * Gamepad (standard mapping) buttons → the same actions as the keyboard; remap here.
+ * Left stick walks (pushed lightly: slowly). The same pressed / held / released
+ * behaviour as keys: phase is held on the right trigger, the shift is a tap.
+ */
+export const PAD_BUTTONS: Partial<Record<number, Action>> = {
+  0: 'jump',      // A / cross
+  1: 'run',       // B / circle (hold)
+  2: 'inspect',   // X / square (hold to touch)
+  3: 'shift',     // Y / triangle
+  4: 'gather',    // left bumper
+  5: 'fire',      // right bumper
+  6: 'gather',    // left trigger
+  7: 'phase',     // right trigger (hold)
+  9: 'pause'      // start / options
+};
+export const PAD = { deadzone: 0.22, slowBelow: 0.55 };
+
 export const CONTROL_LABELS: [string, string][] = [
   ['W A S D', 'walk'],
   ['Shift / C', 'run / walk slowly'],
@@ -28,6 +47,7 @@ export const CONTROL_LABELS: [string, string][] = [
   ['R / right mouse', 'hold to gather the fire, release'],
   ['Q', 'hold to phase'],
   ['E', 'examine'],
+  ['T', 'shift, once you have found how'],
   ['Left click', 'send an ember'],
   ['Esc', 'pause']
 ];

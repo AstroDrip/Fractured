@@ -3,6 +3,7 @@ import { Materials } from './Materials';
 import { ThinBatch } from './ThinBatch';
 import { mulberry32 } from '../core/rng';
 import { WALL, SINKHOLE, VAULTS, GROUND_Y, BED_Y } from './layout';
+import { EnvAssets } from './EnvAssets';
 
 /**
  * Built structures that carry gameplay: the white wall walked in Deranged (with the
@@ -118,7 +119,20 @@ export class Structures {
   private buildVaults(): void {
     for (const v of VAULTS) {
       const zc = (v.z0 + v.z1) / 2;
-      if (v.id === 'fallen-pole') {
+      const authored = v.id === 'fallen-pole' ? EnvAssets.get('fallenPole') : null;
+      if (authored) {
+        // The authored pole (Blender): snapped base on the near side, crossarm digging in
+        for (const src of authored) {
+          const m = src.clone('fallenPole', null)!;
+          m.setEnabled(true);
+          // Lying on the ballast, the crossarm end propped a little higher
+          m.position.set(0.3, BED_Y + 0.17, zc);
+          m.rotation.y = 0.06;
+          m.rotation.z = 0.035;
+          this.meshes.push(m);
+          this.shadowCasters.push(m);
+        }
+      } else if (v.id === 'fallen-pole') {
         const pole = MeshBuilder.CreateCylinder('fallenPole', { height: v.x1 - v.x0 + 1.6, diameter: 0.24, tessellation: 7 }, this.scene);
         pole.rotation.z = Math.PI / 2;
         pole.rotation.y = 0.06;

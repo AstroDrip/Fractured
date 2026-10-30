@@ -19,6 +19,7 @@ export class PostFX {
   private readonly ringCenter = new Vector2(0.5, 0.5);
   private readonly fireUV = new Vector2(0.5, 0.5);
   private heat = 0;
+  private curves!: ColorCurves;
 
   constructor(private scene: Scene, private camera: Camera) {
     this.pipeline = new DefaultRenderingPipeline('main', true, scene, [camera]);
@@ -37,6 +38,7 @@ export class PostFX {
     curves.shadowsHue = 215; curves.shadowsDensity = 10; curves.shadowsSaturation = 15;
     curves.highlightsHue = 35; curves.highlightsDensity = 14; curves.highlightsSaturation = 10;
     ip.colorCurves = curves;
+    this.curves = curves;
     ip.colorCurvesEnabled = true;
     this.pipeline.fxaaEnabled = true;
     this.pipeline.bloomThreshold = 0.62;
@@ -58,6 +60,18 @@ export class PostFX {
     this.pipeline.bloomEnabled = q !== 'low';
     this.pipeline.bloomScale = q === 'high' ? 0.75 : 0.5;
     this.pipeline.grainEnabled = q !== 'low';
+  }
+
+  /**
+   * Void: the white fragment must stay stark and the black absolute, so bloom (which
+   * would smear the white into the black) and the warm/cool grade fall away with it.
+   * Only uniform values change: nothing recompiles.
+   */
+  public setVoid(v: number): void {
+    this.pipeline.bloomWeight = 0.32 * (1 - 0.9 * v);
+    this.curves.shadowsDensity = 10 * (1 - v);
+    this.curves.highlightsDensity = 14 * (1 - v);
+    this.curves.globalSaturation = -8 - 30 * v;
   }
 
   /** Starts a phase interference ring from a screen-space point (0..1 UV). */

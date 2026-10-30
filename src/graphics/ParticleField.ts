@@ -28,6 +28,11 @@ export interface FamilySpec {
   fire?: { radius: number; strength: number };     // +attract / -repel
   contradict?: { rate: number; duration: number };  // bounded trajectory rewinds
   spin?: number;
+  /**
+   * The particle's form (default cube): 'chip' a squat faceted fragment (embers), 'shard'
+   * a long thin splinter (fire fragments), 'flake' a flat irregular scrap (ash, leaves).
+   */
+  shape?: 'cube' | 'chip' | 'shard' | 'flake';
   homeSpring?: number;            // pull toward each particle's home position
   floorY?: number;                // die before reaching this height
   windResponse?: number;          // how much the shared wind carries this family
@@ -76,7 +81,7 @@ export class ParticleField {
       this.age, this.life, this.size, this.seed, this.alphaMul, this.ax, this.ay, this.az, this.ang, this.angV,
       this.histX, this.histY, this.histZ, this.histT, this.rewind];
 
-    this.mesh = MeshBuilder.CreateBox(spec.name, { size: 1 }, scene);
+    this.mesh = ParticleField.baseMesh(scene, spec.name, spec.shape ?? 'cube');
     this.mesh.material = material ?? ParticleField.makeMaterial(scene, spec.name + 'Mat', spec.blend);
     this.mesh.isPickable = false;
     this.mesh.alwaysSelectAsActiveMesh = true;
@@ -86,11 +91,32 @@ export class ParticleField {
     this.mesh.thinInstanceCount = 0;
   }
 
+  /** One base form per family, roughly unit-sized so `size` keeps its meaning. */
+  private static baseMesh(scene: Scene, name: string, shape: 'cube' | 'chip' | 'shard' | 'flake'): Mesh {
+    let m: Mesh;
+    if (shape === 'chip') {
+      m = MeshBuilder.CreatePolyhedron(name, { type: 1, size: 0.62 }, scene);          // octahedron
+      m.scaling.set(1.15, 0.6, 0.85);
+    } else if (shape === 'shard') {
+      m = MeshBuilder.CreatePolyhedron(name, { type: 0, size: 0.55 }, scene);          // tetrahedron
+      m.scaling.set(0.5, 1.7, 0.45);
+    } else if (shape === 'flake') {
+      m = MeshBuilder.CreateDisc(name, { radius: 0.62, tessellation: 5, sideOrientation: Mesh.DOUBLESIDE }, scene);
+      m.scaling.set(1, 0.7, 1);
+    } else {
+      return MeshBuilder.CreateBox(name, { size: 1 }, scene);
+    }
+    m.bakeCurrentTransformIntoVertices();
+    return m;
+  }
+
   public static makeMaterial(scene: Scene, name: string, blend: 'add' | 'alpha'): StandardMaterial {
     const m = new StandardMaterial(name, scene);
     m.disableLighting = true;
     m.diffuseColor = new Color3(1, 1, 1);
-    m.emissiveColor = new Color3(0, 0, 0);
+    // Unlit, the per-instance colour multiplies the emissive term: white emissive shows each
+    // particle's own colour (with black here every particle drew black, and added nothing)
+    m.emissiveColor = new Color3(1, 1, 1);
     m.specularColor = new Color3(0, 0, 0);
     m.transparencyMode = Material.MATERIAL_ALPHABLEND;
     m.alphaMode = blend === 'add' ? Engine.ALPHA_ADD : Engine.ALPHA_COMBINE;

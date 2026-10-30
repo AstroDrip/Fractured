@@ -2,11 +2,13 @@ import { Vector3 } from '@babylonjs/core';
 import {
   PATH, PATH_RADIUS, START, START_CLEARING_RADIUS, TRACK_HALF_WIDTH, BED_HALF_WIDTH,
   TRACK_START_Z, GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, CROSSING, BARRIER, SINKHOLE, WALL, VAULTS,
-  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE, FENCE_RUNS, FENCE_POCKET, FENCE_POST_R, FENCE_RAIL_R,
-  CUTTING, cuttingAt, onCuttingBridge
+  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE, FENCE_RUNS, YARD, FENCE_POCKET, FENCE_POST_R, FENCE_RAIL_R,
+  CUTTING, cuttingAt, onCuttingBridge, ANCHOR, anchorSpurDist, FOREST, forestAt, RIFT, riftWalk
 } from './layout';
 import type { Pt, GravitySurface } from './layout';
-import { R_ALL, realityBit } from '../core/Reality';
+import { R_ALL, R_NORMAL, R_VOID, R_DERANGED, realityBit } from '../core/Reality';
+
+const RIFT_VOID_SEGMENT = 21;   // the footbridge's Void-only middle
 import type { RealityId } from '../core/Reality';
 
 export enum Surface { NONE = 0, SOIL = 1, GRAVEL = 2, PHASE = 3, STONE = 4, WOOD = 5 }
@@ -29,7 +31,7 @@ export interface MoveResult { blockedX: boolean; blockedZ: boolean; }
  */
 export class WalkGrid {
   public readonly res = 0.5;
-  public readonly minX = -32;
+  public readonly minX = -80;
   public readonly minZ = -24;
   public readonly w: number;
   public readonly h: number;
@@ -44,7 +46,7 @@ export class WalkGrid {
   private faces: { s: GravitySurface; w: number; h: number; mask: Uint8Array }[] = [];
 
   constructor() {
-    this.w = Math.ceil(64 / this.res);
+    this.w = Math.ceil(112 / this.res);
     this.h = Math.ceil(340 / this.res);
     const n = this.w * this.h;
     this.flags = new Uint8Array(n);
@@ -53,8 +55,11 @@ export class WalkGrid {
     this.segment = new Uint8Array(n);
     this.paintChapter();
     this.paintFences();
+    this.paintYard();
     this.paintVillage();
     this.paintCutting();
+    this.paintForest();
+    this.paintRift();
     for (const sf of GRAVITY_SURFACES) this.paintFace(sf);
   }
 
@@ -197,6 +202,69 @@ export class WalkGrid {
     }
   }
 
+  /** The ash heap in the signal box doorway (removed when a strong enough flame clears it). */
+  public ashHeap: Obstacle | null = null;
+
+  /** Removes an obstacle (e.g. the ash heap once burned away). */
+  public removeObstacle(o: Obstacle): void {
+    const i = this.obstacles.indexOf(o);
+    if (i >= 0) this.obstacles.splice(i, 1);
+  }
+
+  /** The signal yard: platform with ramps, the box's floor and walls, the ash in its doorway. */
+  private paintYard(): void {
+    const p = YARD.platform, b = YARD.box;
+    this.forCells(p.x0, p.z0, p.x1, p.z1, (k, x, z) => {
+      this.flags[k] = R_ALL; this.surface[k] = Surface.STONE;
+      const toEnd = Math.min(z - p.z0, p.z1 - z);
+      this.height[k] = GROUND_Y + p.h * Math.min(1, toEnd / p.ramp);
+    });
+    this.forCells(p.x1, b.z0, b.x1, b.z1, (k) => {
+      this.flags[k] = R_ALL; this.surface[k] = Surface.STONE; this.height[k] = GROUND_Y + p.h;
+    });
+    const box = (x0: number, z0: number, x1: number, z1: number): Obstacle => {
+      const o: Obstacle = { kind: 'box', x: 0, z: 0, r: 0, x0, z0, x1, z1, realities: R_ALL };
+      this.obstacles.push(o); return o;
+    };
+    // Walls (the west wall has the doorway); between the platform and the box, open ground
+    box(b.x0, b.z0, b.x1, b.z0 + b.wall); box(b.x0, b.z1 - b.wall, b.x1, b.z1);
+    box(b.x1 - b.wall, b.z0, b.x1, b.z1);
+    box(b.x0, b.z0, b.x0 + b.wall, YARD.door.z0); box(b.x0, YARD.door.z1, b.x0 + b.wall, b.z1);
+    // Beyond the platform's edge and the box: nothing walkable but the doorstep
+    this.forCells(p.x1, p.z0, b.x0, p.z1, (k, x, z) => {
+      if (z < b.z0 || z > b.z1) this.flags[k] = 0;
+    });
+    const a = YARD.ash;
+    this.ashHeap = box(a.x0, a.z0, a.x1, a.z1);
+  }
+
+  /** The rift: everything riftWalk calls ground; the bridge's middle only in Void (recovery: the overlook). */
+  private paintRift(): void {
+    const b = RIFT.bounds;
+    this.forCells(b.x0, b.z0, b.x1 + 0.7, b.z1, (k, x, z) => {
+      const w = riftWalk(x, z);
+      if (!w) return;
+      this.flags[k] = w.voidOnly ? R_VOID : R_ALL;
+      this.surface[k] = w.narrow ? Surface.WOOD : Surface.STONE;
+      this.height[k] = w.h;
+      if (w.voidOnly) this.segment[k] = RIFT_VOID_SEGMENT;
+    });
+  }
+
+  /** The forest walkways, the clearing and the overlook; the lattice across the path is matter (Normal/Deranged). */
+  private paintForest(): void {
+    const b = FOREST.bounds;
+    this.forCells(b.x0, b.z0, b.x1 + 1.2, b.z1, (k, x, z) => {
+      const q = forestAt(x, z);
+      if (q.d > 0 || x < FOREST.edgeX + 0.4) return;     // never right to the cliff edge
+      const was = this.flags[k] !== 0;
+      this.flags[k] = R_ALL;
+      if (!was) { this.surface[k] = Surface.SOIL; this.height[k] = q.h; }
+    });
+    const l = FOREST.lattice;
+    this.obstacles.push({ kind: 'box', x: 0, z: 0, r: 0, x0: l.x0, z0: l.z0, x1: l.x1, z1: l.z1, realities: R_NORMAL | R_DERANGED });
+  }
+
   /** The cutting: a corridor whose height follows the authored route; the trunk is narrow. */
   private paintCutting(): void {
     const b = CUTTING.bounds, c = CUTTING.cleft;
@@ -209,7 +277,13 @@ export class WalkGrid {
         return;
       }
       const q = cuttingAt(x, z);
-      if (q.d > CUTTING.radius) return;
+      if (q.d > CUTTING.radius) {
+        // The ledge behind the fallen post: there only in Deranged
+        if (anchorSpurDist(x, z) <= ANCHOR.spur.r) {
+          this.flags[k] = R_DERANGED; this.surface[k] = Surface.STONE; this.height[k] = ANCHOR.spur.h;
+        }
+        return;
+      }
       const wasTrack = this.flags[k] !== 0;
       this.flags[k] = R_ALL;
       if (!wasTrack) { this.surface[k] = q.h > GROUND_Y + 1 ? Surface.STONE : Surface.SOIL; this.height[k] = q.h; }
@@ -261,6 +335,7 @@ export class WalkGrid {
   }
 
   public recoveryFor(segmentId: number): Pt {
+    if (segmentId === RIFT_VOID_SEGMENT) return { x: FOREST.overlook.x + 0.4, z: FOREST.overlook.z };
     const seg = CROSSING.find(s => s.id === segmentId) ?? VILLAGE_ROUTE.find(s => s.id === segmentId);
     return seg ? seg.recovery : BARRIER.recovery;
   }

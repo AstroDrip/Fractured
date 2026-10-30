@@ -32,6 +32,7 @@ export class PalmFire {
   public onRefusedSummon?: () => void;
   public resonance = 0;          // 0..1 set by the world when an anomaly is near
   public phaseTint = 0;          // 0..1 shifts toward chalk-white while phasing
+  public voidTone = 0;           // 0..1 in Void: deep amber, blended over (not added to) the white
   public position = new Vector3();
   public light: PointLight;
   public onPulse?: (p: FirePulse) => void;
@@ -139,8 +140,8 @@ export class PalmFire {
 
     // Fragments: persistent cubes on breathing orbits around the palm
     this.fragments = new ParticleField(scene, {
-      name: 'fireFragments', capacity: PalmFire.FRAGMENTS, blend: 'add', life: [0, 0],
-      size: [0.035, 0.075], colorA: [1.0, 0.66, 0.28, 0.95], colorB: [1.0, 0.66, 0.28, 0.95],
+      name: 'fireFragments', capacity: PalmFire.FRAGMENTS, blend: 'add', life: [0, 0], shape: 'shard',
+      size: [0.035, 0.075], colorA: [0.95, 0.56, 0.2, 0.5], colorB: [0.95, 0.56, 0.2, 0.5],
       spin: 4, seed: 7,
       behavior: (f, i, c) => this.orbit(f, i, c)
     });
@@ -148,15 +149,15 @@ export class PalmFire {
 
     // Cubic embers: rise, drift, and sometimes retrace part of their own path
     this.embers = new ParticleField(scene, {
-      name: 'fireEmbers', capacity: 180, blend: 'add', life: [0.55, 1.4], size: [0.02, 0.05],
-      colorA: [1.0, 0.74, 0.32, 1], colorB: [0.95, 0.3, 0.08, 0.6], fadeIn: 0.08, fadeOut: 0.45,
+      name: 'fireEmbers', capacity: 180, blend: 'add', life: [0.55, 1.4], size: [0.02, 0.05], shape: 'chip',
+      colorA: [1.0, 0.64, 0.26, 0.75], colorB: [0.85, 0.27, 0.06, 0.4], fadeIn: 0.08, fadeOut: 0.45,
       drag: 1.6, gravity: 0.55, noise: { amp: 0.9, freq: 3.2, speed: 1.4 },
       contradict: { rate: 0.5, duration: 0.22 }, spin: 7, seed: 8, windResponse: 2.2
     });
 
     // Negative particles: dark fragments that obscure rather than emit
     this.ash = new ParticleField(scene, {
-      name: 'fireAsh', capacity: 70, blend: 'alpha', life: [1.4, 3.0], size: [0.014, 0.04],
+      name: 'fireAsh', capacity: 70, blend: 'alpha', life: [1.4, 3.0], size: [0.014, 0.04], shape: 'flake',
       colorA: [0.015, 0.014, 0.016, 0.0], colorB: [0.01, 0.01, 0.012, 0.75], fadeIn: 0.3, fadeOut: 0.3,
       drag: 1.2, gravity: 0.18, noise: { amp: 0.5, freq: 1.6, speed: 0.6 },
       fire: { radius: 1.2, strength: -0.6 }, spin: 1.5, seed: 9, windResponse: 1.4
@@ -321,9 +322,16 @@ export class PalmFire {
     const drain = 1 - this.voidAmt * 0.3;
     th.vel.y -= sp.gravity * dt;
     const side = Math.sin(th.t * 9.1) * sp.wobble + this.derangedAmt * Math.sin(th.t * 2.3) * 2.4;
-    th.pos.x += (th.vel.x - this.aim.z * side) * dt;
-    th.pos.z += (th.vel.z + this.aim.x * side) * dt;
-    th.pos.y += th.vel.y * dt;
+    // Substeps no longer than the flame's own radius, so it cannot pass through thin rock,
+    // a ledge or a wall between two frames
+    const vx = th.vel.x - this.aim.z * side, vz = th.vel.z + this.aim.x * side;
+    const travel = Math.hypot(vx, th.vel.y, vz) * dt;
+    const steps = Math.min(8, Math.max(1, Math.ceil(travel / Math.max(0.05, sp.radius))));
+    for (let k = 0; k < steps; k++) {
+      th.pos.x += vx * dt / steps; th.pos.z += vz * dt / steps; th.pos.y += th.vel.y * dt / steps;
+      const hitNow = this.contact ? this.contact(th.pos, sp.radius) : 'none';
+      if (hitNow !== 'none') { this.impact(hitNow); return; }
+    }
     // The core flickers and tumbles; a full mass barely holds together
     const flick = 0.85 + 0.15 * Math.sin(th.t * 31) + (sp.tier === 'mass' ? 0.12 * Math.sin(th.t * 13.7) : 0);
     const core = sp.core * drain * flick;
@@ -354,8 +362,7 @@ export class PalmFire {
     this.influence.pos.copyFrom(th.pos);
     this.influence.radius = sp.reach * 0.35;
     this.influence.strength = 0.7;
-    const hit = this.contact ? this.contact(th.pos, sp.radius) : 'none';
-    if (hit !== 'none' || th.t >= sp.life) this.impact(hit === 'none' ? 'none' : hit);
+    if (th.t >= sp.life) this.impact('none');
   }
 
   private impact(hit: FlameContact): void {
@@ -486,10 +493,28 @@ export class PalmFire {
     this.glow.visibility = f * (0.55 + c * 0.25);
     this.glow.isVisible = f > 0.01;
     this.glowMat.emissiveColor.set(1, 0.72 + pale * 0.25, 0.48 + pale * 0.5);
+    // Void: added light vanishes against white, so the flame is blended over it, deep amber
+    const vt = this.voidTone;
+    if (vt > 0.001) {
+      this.coreMat.emissiveColor.set(1, this.coreMat.emissiveColor.g * (1 - vt) + 0.52 * vt, this.coreMat.emissiveColor.b * (1 - vt) + 0.1 * vt);
+      this.glowMat.emissiveColor.set(1, this.glowMat.emissiveColor.g * (1 - vt) + 0.62 * vt, this.glowMat.emissiveColor.b * (1 - vt) + 0.2 * vt);
+      // Blended rather than added, the glow needs more body to read around the figure
+      this.glow.visibility = Math.min(1, this.glow.visibility * (1 + vt * 0.5));
+      this.glow.scaling.scaleInPlace(1 + vt * 0.3);
+    }
+    const mode = vt > 0.5 ? Engine.ALPHA_COMBINE : Engine.ALPHA_ADD;
+    if (this.glowMat.alphaMode !== mode) {
+      this.glowMat.alphaMode = mode;
+      for (const f of [this.fragments, this.embers]) {
+        const m = f.mesh.material as StandardMaterial;
+        m.alphaMode = mode;
+      }
+    }
 
     // Light: warm, gently breathing, brighter when gathered or just released
     this.light.position.set(this.position.x, this.position.y + 0.12, this.position.z);
-    this.light.intensity = f * fuelK * gutter * (1.7 + c * 1.0 + this.flash * 2.0) * flick;
+    // The key light: strong close to the hand, gone within a few metres (range below)
+    this.light.intensity = f * fuelK * gutter * (2.3 + c * 1.3 + this.flash * 2.4) * flick;
     this.light.range = 7.5 + c * 3 + this.flash * 4;
     this.light.diffuse.set(1.0, 0.6 + pale * 0.25, 0.27 + pale * 0.45);
     // Never disabled: toggling a light changes every material's defines and recompiles them

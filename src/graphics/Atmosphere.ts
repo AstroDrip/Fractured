@@ -5,7 +5,9 @@ import { ZONES } from '../world/layout';
 import { smoothstep } from '../core/rng';
 
 const MOON_DIR = new Vector3(-0.45, -1, 0.55).normalize();
-const VOID_FOG = new Color3(0.024, 0.028, 0.036);       // near-black: the flame matters
+// Cold fill and moon (see docs/VISUAL_BIBLE.md): low, so darkness has the flame as its centre
+export const LIGHT = { fill: 1.35, moon: 0.5 };
+const VOID_FOG = new Color3(0, 0, 0);                    // Void: absolute black beyond the flame
 const DERANGED_FOG = new Color3(0.085, 0.102, 0.094);  // a greenish grey no weather makes
 const DERANGED_MOON = new Vector3(0.6, -0.9, -0.4).normalize();  // shadows that disagree
 
@@ -111,7 +113,7 @@ export class Atmosphere {
     this.space = mix(a.space, b.space);
 
     // Phasing: the air thins and cools; what is hidden becomes legible
-    Color3.LerpToRef(this.baseFog, VOID_FOG, voidAmt * 0.85, this.fogColor);
+    Color3.LerpToRef(this.baseFog, VOID_FOG, voidAmt, this.fogColor);
     Color3.LerpToRef(this.fogColor, DERANGED_FOG, derangedAmt * 0.7, this.fogColor);
     this.fogDensity = density * (1 - voidAmt * 0.3) * (1 + derangedAmt * 0.1);
     this.scene.fogColor = this.fogColor;
@@ -120,10 +122,11 @@ export class Atmosphere {
     this.scene.clearColor = this.clear;
 
     // Void: the sky light nearly leaves. Deranged: light comes from below; the moon moves.
-    this.hemi.intensity = this.ambient * 2.2 * (1 - voidAmt * 0.65) * (1 + derangedAmt * 0.15);
+    // Art direction: very little cold fill, so the flame's pool is the brightest thing near the figure
+    this.hemi.intensity = this.ambient * LIGHT.fill * (1 - voidAmt * 0.65) * (1 + derangedAmt * 0.15);
     this.hemi.diffuse.set(0.42 - phase * 0.06, 0.48 + derangedAmt * 0.06, 0.58 + voidAmt * 0.05);
     Vector3.LerpToRef(this.hemiUp, this.hemiDown, smoothstep(0.4, 0.9, derangedAmt), this.hemi.direction);
-    this.moon.intensity = 0.85 * (1 - voidAmt * 0.6) + derangedAmt * 0.1;
+    this.moon.intensity = LIGHT.moon * (1 - voidAmt * 0.6) + derangedAmt * 0.1;
     Vector3.LerpToRef(MOON_DIR, DERANGED_MOON, derangedAmt, this.moonDir);
     this.moonDir.normalize();
     this.moon.direction.copyFrom(this.moonDir);

@@ -68,6 +68,9 @@ export class FogLayer {
     this.fogParticles.start();
   }
 
+  /** Void: the abyss's fog plane is not there (it would hang pale in the black). */
+  public setVoid(v: number): void { this.fogPlane.isVisible = v < 0.5; }
+
   public setQuality(q: number): void {
     this.fogParticles.emitRate = 4 + q * 6;
   }

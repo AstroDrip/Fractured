@@ -47,7 +47,9 @@ npm test
 | Space | hop, or climb over a low obstacle ahead |
 | F | open or close your hand (the flame) |
 | R or right mouse (hold, release) | gather the flame, then let it go as a pulse |
-| Q (hold) | phase into the local reality (Void or Deranged) |
+| Q (hold) | phase into Void, where the region allows it; release to return |
+| T (tap) | shift Normal / Deranged, once found and where the region allows it |
+| Gamepad | left stick walk (light push: slowly), RT phase, Y shift, X examine (hold to touch), A hop, B run, RB hand, LT/LB gather, Start pause — remap in `PAD_BUTTONS` |
 | E | examine |
 | Left click | send an ember |
 | Esc / P | pause: volume, quality, restart |

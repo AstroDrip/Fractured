@@ -180,7 +180,9 @@ export class AudioSystem {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
     this.waterGain.gain.setTargetAtTime(0.09 * gain, now, 0.5);
-    this.waterPan.pan.setTargetAtTime(Math.max(-1, Math.min(1, pan)), now, 0.3);
+    // In Deranged the water is heard from the side it is not on
+    const p = pan * (1 - 2 * this.lastFrame.deranged);
+    this.waterPan.pan.setTargetAtTime(Math.max(-1, Math.min(1, p)), now, 0.3);
     this.waterLow.frequency.setTargetAtTime(2600 - far * 2100, now, 0.4);
   }
 
@@ -286,28 +288,36 @@ export class AudioSystem {
     o.stop(t0 + attack + dur + 0.05);
   }
 
-  public footstep(surface: FootSurface, intensity: number): void {
+  /**
+   * at: seconds from now; side: pan centre. In Deranged each step is answered a beat later,
+   * quieter, from the other side: the space does not agree about where the feet are.
+   */
+  public footstep(surface: FootSurface, intensity: number, at = 0, side = 0): void {
     if (!this.ctx) return;
+    if (at === 0 && this.lastFrame.deranged > 0.5) {
+      const s = Math.random() < 0.5 ? -1 : 1;
+      this.footstep(surface, intensity * 0.35 * this.lastFrame.deranged, 0.19 + Math.random() * 0.05, s * 0.75);
+    }
     const v = 0.4 + intensity * 0.6;
     const send = 0.25 + this.lastFrame.space * 0.6;
-    const pan = (Math.random() - 0.5) * 0.15;
+    const pan = side + (Math.random() - 0.5) * 0.15;
     if (surface === 'gravel') {
-      this.burst('bandpass', 2300 + Math.random() * 900, 0.8, 0.12 * v, 0.09, pan, send);
-      this.burst('bandpass', 3800, 1.2, 0.05 * v, 0.05, pan, 0, 0.025);
+      this.burst('bandpass', 2300 + Math.random() * 900, 0.8, 0.12 * v, 0.09, pan, send, at);
+      this.burst('bandpass', 3800, 1.2, 0.05 * v, 0.05, pan, 0, at + 0.025);
     } else if (surface === 'soil') {
-      this.burst('lowpass', 650 + Math.random() * 200, 0.7, 0.16 * v, 0.12, pan, send * 0.6);
+      this.burst('lowpass', 650 + Math.random() * 200, 0.7, 0.16 * v, 0.12, pan, send * 0.6, at);
     } else if (surface === 'stone') {
       // Hard, short: a click on top of a low knock
-      this.burst('bandpass', 1500 + Math.random() * 400, 1.6, 0.1 * v, 0.035, pan, send);
-      this.burst('lowpass', 300, 0.8, 0.08 * v, 0.06, pan, send * 0.5);
+      this.burst('bandpass', 1500 + Math.random() * 400, 1.6, 0.1 * v, 0.035, pan, send, at);
+      this.burst('lowpass', 300, 0.8, 0.08 * v, 0.06, pan, send * 0.5, at);
     } else if (surface === 'wood') {
       // Hollow: the trunk answers each step with a short low tone
-      this.tone('sine', 150 + Math.random() * 25, 120, 0.05 * v, 0.005, 0.16, pan, send);
-      this.burst('lowpass', 900, 0.9, 0.07 * v, 0.05, pan, send * 0.4);
+      this.tone('sine', 150 + Math.random() * 25, 120, 0.05 * v, 0.005, 0.16, pan, send, null, at);
+      this.burst('lowpass', 900, 0.9, 0.07 * v, 0.05, pan, send * 0.4, at);
     } else {
       // On phase ground the step is a soft, slightly wrong tone
-      this.tone('sine', 640 + Math.random() * 40, 600, 0.035 * v, 0.005, 0.25, pan, send);
-      this.burst('highpass', 5000, 0.7, 0.02 * v, 0.04, pan, 0);
+      this.tone('sine', 640 + Math.random() * 40, 600, 0.035 * v, 0.005, 0.25, pan, send, null, at);
+      this.burst('highpass', 5000, 0.7, 0.02 * v, 0.04, pan, 0, at);
     }
   }
 
