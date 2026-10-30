@@ -1,6 +1,7 @@
 import { Scene, Mesh, MeshBuilder, TransformNode, Vector3, StandardMaterial, Quaternion } from '@babylonjs/core';
 import { damp, clamp01 } from '../core/rng';
 import { Materials } from '../world/Materials';
+import type { SkinnedBody } from './SkinnedBody';
 
 export interface PlayerPoseInput {
   fire: number;        // 0..1 how present the palm fire is
@@ -33,6 +34,31 @@ const SHIN = 0.42;
 const UPPER_ARM = 0.29;
 const FORE_ARM = 0.27;
 const COAT_DROP = 0.6;       // waist to hem: the coat ends just below the knee
+const IK_MAX_REACH = 0.35;   // feet adapt to ground up to this far above/below the body's ground
+
+/**
+ * Leg forward kinematics in the hip's sagittal plane (y up, z forward), using the
+ * rig's convention: a rotation.x of -a swings the limb forward by a.
+ */
+export function legFK(hip: number, knee: number): { y: number; z: number } {
+  return {
+    y: -THIGH * Math.cos(hip) - SHIN * Math.cos(hip + knee),
+    z: -THIGH * Math.sin(hip) - SHIN * Math.sin(hip + knee)
+  };
+}
+
+/**
+ * Analytic two-bone IK: hip and knee angles that put the ankle at (y, z) relative to
+ * the hip. The knee only bends one way; unreachable targets straighten the leg toward them.
+ */
+export function solveLeg(y: number, z: number): { hip: number; knee: number } {
+  const d = Math.min(THIGH + SHIN - 1e-4, Math.max(Math.abs(THIGH - SHIN) + 1e-4, Math.hypot(y, z)));
+  const c = (d * d - THIGH * THIGH - SHIN * SHIN) / (2 * THIGH * SHIN);
+  const knee = Math.acos(Math.max(-1, Math.min(1, c)));
+  const phi = Math.atan2(-z, -y);
+  const gamma = Math.atan2(SHIN * Math.sin(knee), THIGH + SHIN * Math.cos(knee));
+  return { hip: phi - gamma, knee };
+}
 
 /**
  * The hooded teenager: an articulated procedural figure (shaped limbs, a lathed
@@ -81,6 +107,13 @@ export class Player {
   private yawVel = 0;
   private accel = 0;
   private tmpLook = new Vector3();
+  /** Ground height at a world point (gameplay ground). Set by the game; IK is off without it. */
+  public groundAt?: (x: number, z: number) => number;
+  private ikWeight = 0;
+  /** The authored skinned body, once loaded; the procedural meshes are hidden then. */
+  public skinned: SkinnedBody | null = null;
+  private footOffset = [0, 0];
+  private pelvisDrop = 0;
   private headYaw = 0;
   private headPitch = 0;
   private lastFootIndex = 0;
@@ -217,6 +250,36 @@ export class Player {
     for (const m of this.meshes) m.isPickable = false;
   }
 
+  /**
+   * Switches presentation to the authored skinned body. The procedural joints stay as
+   * the pose rig (animation, IK, cloth springs); their meshes are hidden. Binds at rest.
+   */
+  public attachSkinned(body: SkinnedBody, mats: Materials): void {
+    const map: [string, TransformNode][] = [
+      ['hips', this.hips], ['spine', this.chest],
+      ['coat.B', this.cloth[0].pivot], ['coat.L', this.cloth[2].pivot], ['coat.R', this.cloth[1].pivot],
+      ['neck', this.neck], ['head', this.neck],
+      ['upperarm.L', this.arms[0].upper], ['forearm.L', this.arms[0].fore], ['hand.L', this.arms[0].fore],
+      ['upperarm.R', this.arms[1].upper], ['forearm.R', this.arms[1].fore], ['hand.R', this.arms[1].fore],
+      ['thigh.L', this.legs[0].thigh], ['shin.L', this.legs[0].shin], ['foot.L', this.legs[0].ankle],
+      ['thigh.R', this.legs[1].thigh], ['shin.R', this.legs[1].shin], ['foot.R', this.legs[1].ankle]
+    ];
+    // Rest pose for binding: every mapped joint at zero, hips at their rest height
+    const saved = map.map(([, n]) => n.rotation.clone());
+    const hipsPos = this.hips.position.clone();
+    for (const [, n] of map) n.rotation.setAll(0);
+    this.hips.position.set(0, HIP_Y, 0);
+    body.bind(map, this.root);
+    map.forEach(([, n], i) => n.rotation.copyFrom(saved[i]));
+    this.hips.position.copyFrom(hipsPos);
+    body.useMaterials({ coat: mats.coat, trousers: mats.trousers, skin: mats.skin, shoes: mats.shoes, hoodInner: mats.hoodInner });
+    for (const m of this.meshes) m.setEnabled(false);
+    // The flame sits in the real hand from now on
+    const hand = (body.root.getDescendants(false) as TransformNode[]).find(n => n.name === 'hand.R');
+    if (hand) this.palm.setParent(hand);
+    this.skinned = body;
+  }
+
   public setPosition(p: Vector3): void {
     this.position.copyFrom(p);
     this.root.position.copyFrom(p);
@@ -315,6 +378,14 @@ export class Player {
     this.chest.rotation.y = -Math.sin(g) * (0.12 + run * 0.05) * w;
     this.chest.scaling.y = 1 + breath * 0.012 * (1 - Math.min(1, w) * 0.6);
 
+    // IK only on ordinary ground (not in the air, vaulting or on a face)
+    const ikOn = this.groundAt && this.up.y > 0.99 && pose.airborne < 0.01 && pose.vault === 0 ? 1 : 0;
+    this.ikWeight += (ikOn - this.ikWeight) * damp(8, dt);
+    Vector3.CrossToRef(this.up, this.forward, this.tmpR);
+    // Pelvis: drops to let the lower foot reach its ground; never rises above the animation
+    const lowest = Math.min(this.footOffset[0], this.footOffset[1], 0);
+    this.pelvisDrop += (-lowest * 0.85 - this.pelvisDrop) * damp(10, dt);
+    this.hips.position.y -= this.pelvisDrop * this.ikWeight;
     // Legs: thigh swing, knee bends on the passing phase (higher knee lift when running);
     // the ankle keeps the sole roughly level so the foot plants rather than stabs
     for (let i = 0; i < 2; i++) {
@@ -323,13 +394,30 @@ export class Player {
       const swing = Math.sin(ph) * (0.46 + run * 0.16) * ww * (1 - pose.airborne * 0.6);
       // In the air the legs tuck; a vault lifts the leading leg over the obstacle
       const tuck = pose.airborne * 0.5 + Math.sin(pose.vault * Math.PI) * (i === 0 ? 0.9 : 0.4);
-      const thighX = -swing - crouch * 1.4 - tuck;
-      const kneeX = Math.max(0, Math.cos(ph)) * (0.7 + run * 0.55) * ww + crouch * 2.2 + tuck * 1.3;
-      this.legs[i].thigh.rotation.x = thighX;
-      this.legs[i].shin.rotation.x = kneeX;
+      let thighX = -swing - crouch * 1.4 - tuck;
+      let kneeX = Math.max(0, Math.cos(ph)) * (0.7 + run * 0.55) * ww + crouch * 2.2 + tuck * 1.3;
       // Foot: level in stance, toe dropping as the foot lifts off
       const lift = Math.max(0, Math.cos(ph)) * ww;
-      this.legs[i].ankle.rotation.x = -(thighX + kneeX) * 0.85 + lift * 0.35 + pose.airborne * 0.25;
+      let slope = 0;
+      if (this.ikWeight > 0.001) {
+        // Ground-aware legs: move the animated ankle by the ground's height under it
+        // (relative to the ground under the body) and re-solve hip and knee for it
+        const side = i === 0 ? -1 : 1;
+        const fk = legFK(thighX, kneeX);
+        const fx = this.position.x + this.tmpR.x * side * 0.078 + this.forward.x * fk.z;
+        const fz = this.position.z + this.tmpR.z * side * 0.078 + this.forward.z * fk.z;
+        const raw = Math.max(-IK_MAX_REACH, Math.min(IK_MAX_REACH, this.groundAt!(fx, fz) - this.position.y));
+        this.footOffset[i] += (raw - this.footOffset[i]) * damp(14, dt);
+        const sol = solveLeg(fk.y + (this.footOffset[i] + this.pelvisDrop) * this.ikWeight, fk.z);
+        thighX = sol.hip; kneeX = sol.knee;
+        // Sole follows the slope along the facing direction
+        const toe = this.groundAt!(fx + this.forward.x * 0.13, fz + this.forward.z * 0.13);
+        const heel = this.groundAt!(fx - this.forward.x * 0.13, fz - this.forward.z * 0.13);
+        slope = Math.atan2(toe - heel, 0.26) * this.ikWeight;
+      }
+      this.legs[i].thigh.rotation.x = thighX;
+      this.legs[i].shin.rotation.x = kneeX;
+      this.legs[i].ankle.rotation.x = -(thighX + kneeX) * 0.85 + lift * 0.35 + pose.airborne * 0.25 - slope;
     }
 
     // Arms: counter-swing, elbows bending more at speed; the right arm lifts to hold the fire
@@ -393,6 +481,8 @@ export class Player {
     this.hoodSwing += this.hoodSwingVel * dt;
     this.hoodBack.rotation.x = this.hoodSwing;
     this.hoodBack.rotation.z = -windSide * 0.03;
+
+    if (this.skinned) this.skinned.apply(this.root);
 
     // Blob shadow lies on the current surface
     this.blobShadow.position.copyFrom(this.position).addInPlace(this.tmpR.copyFrom(this.up).scaleInPlace(0.012));

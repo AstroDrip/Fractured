@@ -74,7 +74,7 @@ Run before and after any mobile change.
 | Hardware scaling at Medium = 1 (unchanged) | passed |
 | Desktop shadows/particles unchanged | by code: phone factors apply only when `mobile` |
 | Production build loads, JS served as `text/javascript`, harness absent, no console errors | passed (`vite preview`) |
-| `npm test` | 50 passing |
+| `npm test` | 66 passing |
 
 ## Mobile test results (Chromium device emulation, 740×360, DPR 2)
 

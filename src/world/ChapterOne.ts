@@ -127,8 +127,9 @@ export class ChapterOne {
   public onCaught(): void { this.say('caught', 'It threw me back.', 0.8); }
   public onWallEnter(): void { this.say('on-wall', 'Which way is down now?', 0.5); }
   public onWallLeave(): void { this.say('off-wall', 'Down is down again. For now.', 0.4); }
-  public onRejected(enter: boolean, onWall: boolean): void {
+  public onRejected(enter: boolean, onWall: boolean, insideMatter = false): void {
     if (onWall) this.say('wall-hold', 'Not here. I would fall the wrong way.');
+    else if (insideMatter) this.say('matter-hold', 'Not inside it. It would close around me.');
     else if (enter) this.say('reject-enter', 'It will not let me. Something is in the way there.');
   }
 

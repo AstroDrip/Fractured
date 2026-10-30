@@ -1,6 +1,8 @@
 import { TargetCamera, Vector3, Scene, Vector2, Ray, Mesh } from '@babylonjs/core';
 import { damp, smoothstep } from './rng';
 
+const BASE_FOV = 0.55;
+
 /** An authored camera move: real translation away from the protagonist, not a zoom. */
 export interface CameraShot {
   focus: Vector3;          // what the shot leans toward
@@ -12,6 +14,14 @@ export interface CameraShot {
   hold: number;
   outTime: number;
   releaseOnMove: boolean;  // hand back control early if the player walks away
+  /**
+   * Authored hand-back boundary: the shot holds while the protagonist walks (it orbits
+   * them) and starts its release once they pass this Z. Takes precedence over
+   * releaseOnMove. The full in/hold/out timeline still applies if they never cross it.
+   */
+  releaseBeyondZ?: number;
+  /** Vertical field of view for the shot (blended by its weight). Vertical, so wider screens only gain margin. */
+  fov?: number;
 }
 
 /**
@@ -98,6 +108,17 @@ export class CameraController {
     this.shotStart.copyFrom(this.targetPosition);
   }
   public get inShot(): boolean { return this.shot !== null; }
+
+  /**
+   * Jump the timeline to its release without a jump in framing: if the shot is still
+   * blending in, continue from the same weight on the way out (smoothstep is
+   * symmetric, so in-progress v maps to out-progress 1 - v).
+   */
+  private beginRelease(s: CameraShot): void {
+    const hold = s.inTime + s.hold;
+    if (this.shotT < s.inTime) this.shotT = hold + s.outTime * (1 - this.shotT / s.inTime);
+    else this.shotT = hold;
+  }
   /** 0..1 how much the current shot owns the framing. */
   public get shotWeight(): number {
     const s = this.shot;
@@ -129,10 +150,10 @@ export class CameraController {
       const s = this.shot;
       this.shotT += dt;
       const total = s.inTime + s.hold + s.outTime;
-      if (s.releaseOnMove && this.shotT > s.inTime * 0.5 && this.shotT < s.inTime + s.hold &&
-          Vector3.Distance(this.shotStart, this.targetPosition) > 2.5) {
-        this.shotT = s.inTime + s.hold;     // player walked away: hand back now
-      }
+      const crossed = s.releaseBeyondZ !== undefined && this.targetPosition.z > s.releaseBeyondZ;
+      const walkedAway = s.releaseBeyondZ === undefined && s.releaseOnMove && this.shotT > s.inTime * 0.5 &&
+        Vector3.Distance(this.shotStart, this.targetPosition) > 2.5;
+      if ((crossed || walkedAway) && this.shotT < s.inTime + s.hold) this.beginRelease(s);
       w = this.shotWeight;
       dist = s.distance; pitch = s.pitch; yaw = s.yawOffset;
       if (this.shotT >= total) this.shot = null;
@@ -146,7 +167,8 @@ export class CameraController {
       this.shakeOffset.setAll(0);
       this.shake = 0;
     }
-    this.camera.fov = 0.55 - phase * 0.018;
+    const shotFov = this.shot?.fov ?? BASE_FOV;
+    this.camera.fov = BASE_FOV + (shotFov - BASE_FOV) * w - phase * 0.018;
     this.apply(w, dist, pitch, yaw);
     this.updateOcclusion(dt);
   }

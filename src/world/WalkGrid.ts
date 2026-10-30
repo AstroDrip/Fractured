@@ -2,7 +2,7 @@ import { Vector3 } from '@babylonjs/core';
 import {
   PATH, PATH_RADIUS, START, START_CLEARING_RADIUS, TRACK_HALF_WIDTH, BED_HALF_WIDTH,
   TRACK_START_Z, GAP_NEAR_Z, GAP_FAR_Z, TRACK_END_Z, CROSSING, BARRIER, SINKHOLE, WALL, VAULTS,
-  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE,
+  GROUND_Y, BED_Y, BRIDGE_Y, segDist, GRAVITY_SURFACES, FACADE, VILLAGE, VILLAGE_ROUTE, FENCE_RUNS, FENCE_POCKET, FENCE_POST_R, FENCE_RAIL_R,
   CUTTING, cuttingAt, onCuttingBridge
 } from './layout';
 import type { Pt, GravitySurface } from './layout';
@@ -52,6 +52,7 @@ export class WalkGrid {
     this.height = new Float32Array(n).fill(GROUND_Y);
     this.segment = new Uint8Array(n);
     this.paintChapter();
+    this.paintFences();
     this.paintVillage();
     this.paintCutting();
     for (const sf of GRAVITY_SURFACES) this.paintFace(sf);
@@ -155,6 +156,44 @@ export class WalkGrid {
       const turned = Math.abs(Math.sin(h.yaw)) > 0.5;
       const hw = (turned ? h.d : h.w) / 2, hd = (turned ? h.w : h.d) / 2;
       this.obstacles.push({ kind: 'box', x: 0, z: 0, r: 0, x0: h.x - hw, z0: h.z - hd, x1: h.x + hw, z1: h.z + hd, realities: h.realities });
+    }
+  }
+
+  /**
+   * Fences agree with what is seen: posts and intact rails are solid, the broken bays
+   * are open. Behind the first fence's broken bays is a small hollow, walkable so the
+   * gap leads somewhere. Runs exactly the same geometry as Props.buildFences.
+   */
+  private paintFences(): void {
+    const p = FENCE_POCKET;
+    this.forCells(p.x - p.r, p.z - p.r, p.x + p.r, p.z + p.r, (k, x, z) => {
+      if (Math.hypot(x - p.x, z - p.z) <= p.r) { this.flags[k] = R_ALL; this.surface[k] = Surface.SOIL; }
+    });
+    for (const run of FENCE_RUNS) {
+      const len = Math.hypot(run.to.x - run.from.x, run.to.z - run.from.z);
+      const n = Math.floor(len / 2);
+      const pt = (t: number): Pt => ({ x: run.from.x + (run.to.x - run.from.x) * t, z: run.from.z + (run.to.z - run.from.z) * t });
+      // Broken bays: open the gap fully (path edge cells included), so it is a real way through
+      for (const i of run.broken) {
+        const a = pt(i / n), b = pt((i + 1) / n);
+        this.forCells(Math.min(a.x, b.x) - 1, Math.min(a.z, b.z) - 1, Math.max(a.x, b.x) + 1, Math.max(a.z, b.z) + 1, (k, x, z) => {
+          if (segDist(x, z, a, b) <= 1.1 && this.flags[k] === 0 && Math.hypot(x - p.x, z - p.z) < p.r + 2.4) {
+            this.flags[k] = R_ALL; this.surface[k] = Surface.SOIL;
+          }
+        });
+      }
+      for (let i = 0; i <= n; i++) {
+        const a = pt(i / n);
+        this.obstacles.push({ kind: 'circle', x: a.x, z: a.z, r: FENCE_POST_R, x0: 0, z0: 0, x1: 0, z1: 0, realities: R_ALL });
+        if (i === n || run.broken.includes(i)) continue;
+        const b = pt((i + 1) / n);
+        // Intact rail: a row of small circles along it (fences are not axis-aligned)
+        const seg = Math.hypot(b.x - a.x, b.z - a.z), steps = Math.ceil(seg / 0.3);
+        for (let s = 1; s < steps; s++) {
+          const t = s / steps;
+          this.obstacles.push({ kind: 'circle', x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, r: FENCE_RAIL_R, x0: 0, z0: 0, x1: 0, z1: 0, realities: R_ALL });
+        }
+      }
     }
   }
 

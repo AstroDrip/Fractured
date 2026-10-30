@@ -4,6 +4,8 @@ import {
 } from '@babylonjs/core';
 import { ParticleField, FieldContext } from './ParticleField';
 import { damp, clamp01 } from '../core/rng';
+import { throwSpec } from '../core/FlameTiers';
+import type { ThrowSpec, FlameContact } from '../core/FlameTiers';
 
 export type FireState = 'dismissed' | 'summoning' | 'active' | 'dismissing';
 
@@ -39,6 +41,24 @@ export class PalmFire {
   /** A landed ember keeps burning here for a while, lighting the ground (null when out). */
   public flare: { pos: Vector3; t: number } | null = null;
   public static readonly FLARE_TIME = 8;
+  /** Direction the flame is thrown (horizontal, unit). Set by the game from the protagonist's facing. */
+  public readonly aim = new Vector3(0, 0, 1);
+  /** What the travelling flame is touching (set by the game: ground, walls, water, creatures). */
+  public contact?: (p: Vector3, radius: number) => FlameContact;
+  /** Called once per thrown flame at its end: where, what it hit and its spec. */
+  public onImpact?: (at: Vector3, hit: FlameContact, spec: ThrowSpec) => void;
+  /** 0..1 how far the world has resolved into Void / Deranged (set by the game). */
+  public voidAmt = 0;
+  public derangedAmt = 0;
+  /**
+   * The flame's local influence on the world (fog thinned, grass pushed): the travelling
+   * flame, then its impact, recovering over IMPACT_RECOVERY seconds. Read by the game.
+   */
+  public readonly influence = { pos: new Vector3(0, -100, 0), radius: 0, strength: 0 };
+  private thrown: { pos: Vector3; vel: Vector3; spec: ThrowSpec; t: number; trailAcc: number } | null = null;
+  private thrownCore!: Mesh;
+  private thrownGlow!: Mesh;
+  private static readonly IMPACT_RECOVERY = 2.6;
   public onSummon?: () => void;
   public onDismiss?: () => void;
 
@@ -163,6 +183,13 @@ export class PalmFire {
     this.emberCore.isVisible = false;
     this.flareGlow = this.glow.clone('flareGlow');
     this.flareGlow.isVisible = false;
+    // The thrown flame: an irregular faceted core in its own glow
+    this.thrownCore = MeshBuilder.CreatePolyhedron('thrownFlame', { type: 1, size: 1 }, scene);
+    this.thrownCore.material = this.coreMat;
+    this.thrownCore.isPickable = false;
+    this.thrownCore.isVisible = false;
+    this.thrownGlow = this.glow.clone('thrownGlow');
+    this.thrownGlow.isVisible = false;
 
     // Shockwave rings: a bright band at the edge of a disc, spread along the ground
     const rt = new DynamicTexture('fireRingTex', { width: 128, height: 128 }, scene, true);
@@ -263,25 +290,107 @@ export class PalmFire {
     return this.charge;
   }
 
-  /** Called when the gather input is released; releases a pulse if enough was gathered. */
+  /** True while a thrown flame is in the air. */
+  public get throwing(): boolean { return this.thrown !== null; }
+
+  /**
+   * Called when the gather input is released: throws the gathered flame along `aim`.
+   * Its tier (flick, fireball, mass) follows the charge and sets everything about it.
+   * One thrown flame at a time; releasing while one is in the air spends nothing.
+   */
   public release(): void {
-    if (this.state !== 'active' || this.charge < 0.05) { this.charge = 0; return; }
-    // A quick press still lets out a small pulse; holding longer makes it larger
-    const c = Math.max(0.2, this.charge);
-    this.fuel = Math.max(0, this.fuel - (PalmFire.PULSE_COST + 0.18 * c));
+    const spec = this.state === 'active' && !this.thrown ? throwSpec(this.charge) : null;
     this.charge = 0;
+    if (!spec) return;
+    this.fuel = Math.max(0, this.fuel - spec.cost);
     this.flash = 1;
-    for (let i = 0; i < 46; i++) {
-      const a = (i / 46) * Math.PI * 2;
-      const sp = 2.6 + c * 2.6;
+    const v = new Vector3(this.aim.x * spec.speed, spec.lift, this.aim.z * spec.speed);
+    this.thrown = { pos: this.position.clone(), vel: v, spec, t: 0, trailAcc: 0 };
+    // The hand lets go: a few embers spill back from it
+    for (let i = 0; i < 10 + spec.charge * 20; i++) {
       this.embers.spawn(this.position.x, this.position.y, this.position.z,
-        Math.cos(a) * sp, 0.4 + Math.random() * 0.5, Math.sin(a) * sp, { life: 0.7 + c * 0.6 });
+        -v.x * 0.08 + (Math.random() - 0.5) * 1.2, Math.random() * 0.8, -v.z * 0.08 + (Math.random() - 0.5) * 1.2, { life: 0.5 });
     }
-    const radius = 4 + c * 5;
-    this.shockwave(this.feet, this.surfaceUp, radius);
-    this.emberFlash = 1;
-    this.emberFlashPos.copyFrom(this.position);
-    if (this.onPulse) this.onPulse({ pos: this.position.clone(), radius, strength: c });
+  }
+
+  private updateThrown(dt: number): void {
+    const th = this.thrown!;
+    const sp = th.spec;
+    th.t += dt;
+    // Reality shapes the flight: Void drains it, Deranged bends it
+    const drain = 1 - this.voidAmt * 0.3;
+    th.vel.y -= sp.gravity * dt;
+    const side = Math.sin(th.t * 9.1) * sp.wobble + this.derangedAmt * Math.sin(th.t * 2.3) * 2.4;
+    th.pos.x += (th.vel.x - this.aim.z * side) * dt;
+    th.pos.z += (th.vel.z + this.aim.x * side) * dt;
+    th.pos.y += th.vel.y * dt;
+    // The core flickers and tumbles; a full mass barely holds together
+    const flick = 0.85 + 0.15 * Math.sin(th.t * 31) + (sp.tier === 'mass' ? 0.12 * Math.sin(th.t * 13.7) : 0);
+    const core = sp.core * drain * flick;
+    this.thrownCore.isVisible = true;
+    this.thrownCore.position.copyFrom(th.pos);
+    this.thrownCore.scaling.set(core, core * (1.15 + 0.2 * Math.sin(th.t * 17)), core);
+    this.thrownCore.rotation.y += dt * 8; this.thrownCore.rotation.x += dt * 5;
+    this.thrownGlow.isVisible = true;
+    this.thrownGlow.position.copyFrom(th.pos);
+    this.thrownGlow.scaling.setAll(Math.max(0.0001, (0.6 + sp.charge * 1.6) * flick * drain));
+    this.thrownGlow.visibility = 0.8;
+    // Trail: sparks shed along the real path, blown back by the flight and the wind
+    th.trailAcc += sp.sparks * dt * (0.5 + this.quality * 0.5);
+    while (th.trailAcc >= 1) {
+      th.trailAcc -= 1;
+      const j = sp.radius * 0.8;
+      this.embers.spawn(th.pos.x + (Math.random() - 0.5) * j, th.pos.y + (Math.random() - 0.5) * j, th.pos.z + (Math.random() - 0.5) * j,
+        -th.vel.x * 0.12 + (Math.random() - 0.5) * 0.6, 0.2 + Math.random() * 0.5 - this.derangedAmt * 1.2, -th.vel.z * 0.12 + (Math.random() - 0.5) * 0.6,
+        { life: 0.35 + sp.charge * 0.4 });
+    }
+    if (sp.tier === 'mass' && Math.random() < dt * 20) {
+      this.ash.spawn(th.pos.x, th.pos.y, th.pos.z, (Math.random() - 0.5) * 0.4, 0.3, (Math.random() - 0.5) * 0.4);
+    }
+    // Its light travels with it, and the world answers it along the way
+    this.emberLight.position.copyFrom(th.pos);
+    this.emberLight.intensity = (1.2 + sp.charge * 2.2) * flick * drain;
+    this.emberLight.range = 4 + sp.charge * 6;
+    this.influence.pos.copyFrom(th.pos);
+    this.influence.radius = sp.reach * 0.35;
+    this.influence.strength = 0.7;
+    const hit = this.contact ? this.contact(th.pos, sp.radius) : 'none';
+    if (hit !== 'none' || th.t >= sp.life) this.impact(hit === 'none' ? 'none' : hit);
+  }
+
+  private impact(hit: FlameContact): void {
+    const th = this.thrown!;
+    const sp = th.spec;
+    const at = th.pos.clone();
+    const drain = 1 - this.voidAmt * 0.3;
+    const reach = sp.reach * drain * (hit === 'water' ? 0.4 : 1);
+    if (hit === 'water') {
+      // Water does not burn: a hiss and a little vapour, nothing more
+      for (let i = 0; i < 10 + sp.charge * 18; i++) {
+        this.ash.spawn(at.x + (Math.random() - 0.5) * 0.5, at.y + 0.05, at.z + (Math.random() - 0.5) * 0.5,
+          (Math.random() - 0.5) * 0.3, 0.6 + Math.random() * 0.6, (Math.random() - 0.5) * 0.3);
+      }
+      this.shockwave(at, Vector3.UpReadOnly, 0.6 + sp.charge * 0.8);
+    } else {
+      // Burst: more, faster and longer-lived with charge; a splash off solid things
+      const n = Math.round(14 + sp.charge * 46);
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2, s2 = 1.2 + sp.charge * 3.4;
+        this.embers.spawn(at.x, at.y, at.z, Math.cos(a) * s2 * (0.6 + Math.random() * 0.4),
+          0.5 + Math.random() * (0.6 + sp.charge), Math.sin(a) * s2 * (0.6 + Math.random() * 0.4), { life: 0.5 + sp.charge * 0.7 });
+      }
+      if (hit !== 'none') this.shockwave(at, Vector3.UpReadOnly, reach * 0.6);
+    }
+    this.emberFlash = hit === 'water' ? 0.35 : 0.5 + sp.charge * 0.5;
+    this.emberFlashPos.copyFrom(at);
+    this.influence.pos.copyFrom(at);
+    this.influence.radius = reach;
+    this.influence.strength = 1;
+    this.thrownCore.isVisible = false;
+    this.thrownGlow.isVisible = false;
+    this.thrown = null;
+    if (this.onImpact) this.onImpact(at, hit, sp);
+    if (this.onPulse) this.onPulse({ pos: at, radius: reach, strength: sp.charge * drain });
   }
 
   /** Sends a single ember to a point on the ground, where it opens into a small pulse. */
@@ -455,6 +564,8 @@ export class PalmFire {
     } else if (this.seeker) {
       this.emberLight.intensity = 1.4;
       this.emberLight.range = 6;
+    } else if (this.thrown) {
+      // set by updateThrown
     } else if (this.emberFlash > 0) {
       // A released pulse lights everything around for a moment
       this.emberLight.position.set(this.emberFlashPos.x, this.emberFlashPos.y + 0.4, this.emberFlashPos.z);
@@ -464,6 +575,11 @@ export class PalmFire {
       this.emberLight.intensity = 0;
     }
     this.emberFlash = Math.max(0, this.emberFlash - dt * 2.2);
+    if (this.thrown) this.updateThrown(dt);
+    else if (this.influence.strength > 0) {
+      // After an impact the world recovers: fog closes in again, grass settles
+      this.influence.strength = Math.max(0, this.influence.strength - dt / PalmFire.IMPACT_RECOVERY);
+    }
     this.updateRings(dt);
 
     this.fragments.update(ctx);
@@ -520,6 +636,7 @@ export class PalmFire {
     this.state = 'dismissed';
     this.strength = 0; this.charge = 0; this.flash = 0; this.seeker = null;
     this.flare = null; this.emberFlash = 0; this.emberLight.intensity = 0; this.emberCore.isVisible = false; this.flareGlow.isVisible = false;
+    this.thrown = null; this.thrownCore.isVisible = false; this.thrownGlow.isVisible = false; this.influence.strength = 0;
     for (const r of this.rings) { r.t = 1; r.mesh.isVisible = false; }
     this.embers.clear(); this.ash.clear();
   }

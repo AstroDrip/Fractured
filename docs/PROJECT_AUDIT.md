@@ -1,5 +1,72 @@
 # Project Audit
 
+## Pass 8 (world/fire part; 2026-10-30): thrown flame, fire in the world, the fracture
+
+Baseline: passes 6 and 7 uncommitted and intact; `tsc` clean, 61 tests, build OK.
+
+| Area | Change | Status |
+| --- | --- | --- |
+| Thrown flame | Releasing the gathered flame (R / right mouse, touch long-press) now **throws** it along the facing direction instead of a radial pulse at the palm. One source of truth (`core/FlameTiers.ts`): flick (< 0.4), fireball (< 0.85), mass; radius = visual core, speed, arc, gravity, life, reach and cost all scale with charge. Lifecycle held → release → travel (trail sparks on the real path, its own light, wobble for a mass) → contact → impact → dissipation, one in the air at a time. Cost = 0.08 + 0.18 × charge (the established pulse rule). | Implemented and tested (unit + in game) |
+| Contact | Visible terrain, the stream (water), solid obstacles in the current reality (houses, the fallen tree, fence posts; low ones below their top), both wall faces, the Hound, Drifters. Water: hiss and vapour, reduced reach, no burst. | Implemented, in-game checked (contacts, Hound repelled by a fireball hit) |
+| Reality response | Void: core and reach × 0.7 (drained). Deranged: the path bends sideways and trail sparks sink instead of rise. | Implemented, not visually reviewed in Deranged |
+| Fire in the world | Shared reality shader (`RealityPlugin`): fog thins (never vanishes) around the held flame and around the thrown flame and its impact, with a ragged edge and a 2.6 s recovery; grass is pushed away from both. One shared field (`RealityFX.hold/infl`), no per-object scripts. | Implemented (visual effect subtle; not tuned frame by frame) |
+| Fallen tree | Rebuilt as a fracture: rails lift out of the ballast, run into the trunk and leave it at another angle; sleepers on end; roots growing out of the track bed into the fallen trunk. Fades in Void with the rest of the matter (shadow stays); a pale trace of rails and trunk remains, strongest in Void. Collision and phase safety unchanged. | Implemented, screenshots Normal + Void |
+| Tests | `tests/flame.test.ts` (+5): thresholds, tier order, size/reach/cost monotonic, visual = collision radius, mass vs flick physics, cost rule. **66 passing.** | |
+
+Not done in this part: new forest/industrial/vertical regions, sculpted rebuild of the weakest props (fallen pole, cliffs), displaced water surface, debris reacting to impacts, LOD/profiling, 15–20 min chapter (autopilot over every route: **186 s simulated**).
+
+## Pass 7 (2026-10-30): asset pipeline, skinned protagonist, reveal framing
+
+- Preflight: Windows 11, Intel Iris Xe, 7.7 GB RAM, no CUDA, **Blender 5.2 LTS installed** (not on PATH). TRELLIS.2 / TripoSR need NVIDIA; Hunyuan3D-2 and MeshAnything V2 have licence restrictions; Mixamo needs an Adobe sign-in. Chosen: headless Blender scripting (original work).
+- `tools/asset_pipeline/build_protagonist.py` builds the hero (skin-modifier body + subdivision, thick hood with a dark face disc, open coat, belt/strap/satchel), a 19-bone armature with joints at the pose rig's pivots, automatic body weights + explicit hood/coat weights, GLB export. `validate_glb.py` checks skin, weights, joints, triangle budget. `render_pose_check.py` renders stress poses.
+- Asset: `assets/game/character/protagonist.glb` (8,026 triangles, 5 materials, 19 joints, 240 KB, no animation clips); source `assets/source/character/protagonist.blend`.
+- Runtime: `entities/SkinnedBody.ts` loads it (`@babylonjs/loaders`) and retargets the procedural pose rig onto the skeleton every frame (frame-change matrix for the glTF reflection); the flame sits in the real `hand.R`. Falls back to the procedural figure if loading fails.
+- Reveal: framing found by projecting the island's real silhouette and the protagonist; shot FOV 0.75 (vertical, so wider screens only gain margin); at 4:3 the island fits (top 0.11, left 0.05) except the thin tower tip; protagonist at (0.75, 0.73).
+- Not done: authored animation clips, root motion, hand IK, climbing; foot-IK sole height not re-measured on the skinned mesh.
+
+---
+
+## Pass 6 (2026-10-30): opening defects, leg IK
+
+### Baseline before this pass (measured)
+`main` = `origin/main` (`f1cd7ed`), clean tree. `tsc` clean, 50 tests passing, build succeeds.
+No Blender in this environment (`which blender` → none), so the Blender skill workflows
+in the brief could not be run; no 3D or animation assets were generated.
+
+### Defects found, cause, fix
+| Defect | Verified cause | Fix | Evidence |
+| --- | --- | --- | --- |
+| Invisible wall at the broken fence (start) | Fences had **no collision**; the walk grid's path edge (radius 1.3) stopped ~0.16 m short of the fence line, so the broken bays met an invisible wall, while near the start the clearing extended *through* the fence | `WalkGrid.paintFences`: posts and intact rails are solid (circle colliders along the rail line); broken bays are carved open onto a real hollow behind (`FENCE_POCKET`) with something to examine (an open suitcase packed with earth) | `tests/defects.test.ts` (path walkable from start, gap reaches the hollow, intact bays block); in game: walked in, examined, walked out; walking at an intact bay stops at the rail |
+| Forward teleport at the fallen tree | Releasing phase inside the tree let Normal commit; `updateRecovery` then `teleport`ed to the nearer side | Phase **holds** (refuses to leave, with strain + thought) while Normal matter would close around the protagonist, then releases on its own once clear. If the phase is forced to end there (flame out), a 0.4 s visible slide to the nearest free point (`nearestFree`), never a jump | tests: held inside / releases outside / rapid taps never commit inside / forced exit goes to the near side < 1.5 m. In game: release inside → `held`, 0.24 m drift (walking momentum only); forced exit → 0.75 m slide to the near side |
+| Reveal shot cut by walking | `releaseOnMove` ended it after 2.5 m; also jumped the timeline to hold-end mid-blend (a framing snap) | `releaseBeyondZ` (authored boundary, z 117 before the sleeper pile); release from mid-blend continues at the same weight (no jump). Framing retuned so the protagonist stays in frame | tests: walking keeps the shot; crossing mid-blend changes weight < 0.03/frame; full timeline when still. In game: weight 1.0 at z 110 while walking, max change 0.01/frame |
+
+Other teleport paths audited: fall recovery (fade → recovery point, unchanged, intended), Hound catch (fade → checkpoint, unchanged), chapter restart. No other silent repositioning found.
+
+### Leg IK (implemented, analytic, on the existing hierarchy)
+Per foot: ground probe at the animated foot position (walk-grid height), smoothed offset,
+analytic two-bone solve (`solveLeg`, inverse of `legFK`) for hip and knee, pelvis drop for
+the lower foot, sole pitched to the ground slope (toe/heel probes). Off in the air, while
+vaulting and on faces. Measured: on the ballast edge (one foot 0.1 m higher) both soles sit
+within 1 cm of their flat-ground height. Not a skinned rig: joints are still separate meshes.
+
+### Requirements checklist (honest status)
+| Requirement | Status |
+| --- | --- |
+| Fence invisible wall | Implemented and tested |
+| Phase-obstacle teleport | Implemented and tested |
+| Reveal camera hand-back and framing | Implemented and tested (desktop aspect only; mobile aspect not checked) |
+| Ground-aware feet (IK, pelvis, slope) | Implemented and tested (walk-grid ground, not terrain mesh) |
+| Skinned skeletal protagonist, animation clips, root motion | **Not implemented** (no authoring tool available; procedural hierarchy remains) |
+| Hand IK on climbable faces, climbing/ledge system | Not implemented |
+| Skinned creatures, creature navigation beyond the grid | Not implemented |
+| Redesigned phase-blocking tree as a fracture | Not implemented (tree kept; now collision-safe) |
+| Displaced water surface, flame fog parting, flame/grass push | Not implemented |
+| LOD / animation LOD / relevance system | Not implemented (not profiled: hidden pane) |
+| 15–20 min chapter | **Not met**: autopilot over every route 185 s simulated; first play not measured |
+| Audio listened to / phones / real-time FPS | Not verified |
+
+---
+
 ## Pass 5 (2026-10-30): the cutting, creature bodies, vortex in grass and fog
 
 ### Baseline before this pass (measured)

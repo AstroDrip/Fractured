@@ -275,6 +275,11 @@ export class Drifters {
     }
   }
 
+  /** True if a drifter is within `r` of p (a thrown flame touching one). */
+  public near(p: Vector3, r: number): boolean {
+    return this.beings.some(b => b.scattered === 0 && Vector3.DistanceSquared(b.centre, p) < r * r);
+  }
+
   /** A pulse or ember within reach scatters them. Returns how many scattered. */
   public hit(at: Vector3, radius: number): number {
     let n = 0;

@@ -1,6 +1,8 @@
 # Test Plan and Results
 
-## Automated (`npm test`, Vitest) — 50 tests, all passing
+## Automated (`npm test`, Vitest) — 66 tests, all passing
+- `tests/flame.test.ts`: throw thresholds; flick/fireball/mass by charge; radius, reach and cost never decrease with charge and the visual core equals the collision radius; a mass is slower, heavier and less stable than a flick; cost follows 0.08 + 0.18 × charge.
+- `tests/defects.test.ts`: opening path walkable from the start; broken fence bays lead to the hollow; intact bays block; phase held inside the fallen tree and released once clear; rapid taps never commit inside it; forced exit resolves to the near side within 1.5 m; reveal shot survives walking, releases at its boundary without a weight jump, plays fully when still; leg IK inverts FK, bends the knee for a raised foot and never hyper-extends.
 - `tests/creatures.test.ts` (Babylon NullEngine, no GPU): Hound wakes on running and stalks; a slow walker with the hand closed passes; it loses a protagonist above reach on a face, searches, returns; a pulse repels it. Watcher retreats when approached (never closes distance) and vanishes on a phase transition.
 - `tests/regions.test.ts` (cutting): route connected in Normal including heights; height changes < 0.4 m per sample along the route; the trunk is the only crossing and is wood; the shelf edge cannot be walked off.
 - `tests/regions.test.ts`: village loop connectivity in Normal; the Void path reaches past the fallen tree only in Void (Normal cannot); Void-span recovery points are solid; the ravine lies under the Void path and never under real ground; only the absent house gives way in Void; per-surface face grids (facade band blocked, passage beneath open, white wall unchanged); end-to-end facade traversal below the break; surface entry regions; screen-to-face input for walls and ceilings (direction and speed); the vortex starts near its route, circulates tangentially and is not felt far away.

@@ -259,6 +259,11 @@ export const FOOTPRINTS_TO_EDGE = { z0: 163, z1: GAP_NEAR_Z - 0.3, x: 2.0 };
 export const FOOTPRINTS_RETURNING = { z0: WORLD_END_Z - 0.4, z1: TRACK_END_Z - 9, x: -2.0 };
 
 export const BOOT = { x: -12.6, z: 0.9 };    // a boot on a fence post
+// Beyond the broken bays of the first fence: a small hollow with an open suitcase.
+// The gap in the fence is the way in; the intact bays are solid (WalkGrid.paintFences).
+export const FENCE_POCKET = { x: -20.1, z: -6.3, r: 1.8 };
+export const FENCE_POST_R = 0.18;      // posts block within this radius
+export const FENCE_RAIL_R = 0.2;       // intact rails block within this distance of their line
 export const LAMP = { x: 2.0, z: 299.5 };      // the signal lamp at the end
 export const FIGURE = { x: 1.6, z: GAP_FAR_Z + 4 };  // figure seen across the gap
 export const RISING_RAIL = { z0: 250, z1: 262 }; // right rail leaves the ground here
@@ -273,6 +278,9 @@ export interface PoiDef {
   id: string; x: number; z: number; radius: number; lines: string[];
 }
 export const POIS: PoiDef[] = [
+  { id: 'suitcase', x: FENCE_POCKET.x, z: FENCE_POCKET.z, radius: 1.8, lines: [
+    'Packed with earth. Pressed in, to the corners.',
+    'Someone wanted it to be heavy.'] },
   { id: 'boot', x: BOOT.x + 0.9, z: BOOT.z + 0.6, radius: 2.4, lines: [
     'Set down carefully. No mud on it.',
     'No mud anywhere near it.'] },
@@ -306,6 +314,8 @@ export function walkDistance(x: number, z: number): number {
       Math.abs(z - GAP_FAR_Z), Math.abs(z - TRACK_END_Z));
     d = Math.min(d, Math.hypot(Math.max(dx, 0), zEdge));
   }
+  // The hollow beyond the broken fence
+  d = Math.min(d, Math.hypot(x - FENCE_POCKET.x, z - FENCE_POCKET.z) - FENCE_POCKET.r);
   // The cutting
   const cb = CUTTING.bounds;
   if (x > cb.x0 && x < cb.x1 && z > cb.z0 && z < cb.z1) d = Math.min(d, cuttingAt(x, z).d - CUTTING.radius);

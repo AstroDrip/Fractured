@@ -40,6 +40,12 @@ export class Atmosphere {
     this.moon.renderPriority = 5;
   }
 
+  /** Adds casters later (e.g. the skinned protagonist, which loads asynchronously). */
+  public addShadowCasters(casters: AbstractMesh[]): void {
+    this.casters = [...this.casters, ...casters];
+    if (this.shadows) for (const c of casters) this.shadows.addShadowCaster(c, false);
+  }
+
   public setShadowCasters(casters: AbstractMesh[]): void {
     this.casters = casters;
     if (this.shadows) for (const c of casters) this.shadows.addShadowCaster(c, false);

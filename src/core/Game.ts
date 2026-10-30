@@ -1,4 +1,5 @@
 import { Engine, Scene, Vector3, Vector2, Matrix, StandardMaterial } from '@babylonjs/core';
+import type { WalkGrid } from '../world/WalkGrid';
 import { InputManager } from './InputManager';
 import { CameraController } from './CameraController';
 import { PhaseSystem } from './PhaseSystem';
@@ -22,10 +23,15 @@ import { Surface } from '../world/WalkGrid';
 import { InteractionHUD } from '../ui/InteractionHUD';
 import { TouchControls } from '../ui/TouchControls';
 import { VortexDebris } from '../graphics/VortexDebris';
+import type { FlameContact } from './FlameTiers';
+import { SkinnedBody } from '../entities/SkinnedBody';
+import protagonistUrl from '../../assets/game/character/protagonist.glb?url';
 import { FlameTapCharger } from './FlameTapCharger';
 import { TOUCH } from './controls';
-import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, TRACK_HALF_WIDTH, VILLAGE, phaseTargetAt, vantageAt } from '../world/layout';
+import { START, START_YAW, BARRIER, POIS, GROUND_Y, TRACK_END_Z, BED_Y, LAMP, TRACK_HALF_WIDTH, VILLAGE, CUTTING, GRAVITY_SURFACES, phaseTargetAt, vantageAt } from '../world/layout';
 
+const REVEAL_RELEASE_Z = 117;  // the reveal hands back here (just before the sleeper pile), or after its hold
+const PUSH_TIME = 0.4;        // seconds: returning matter pushes the protagonist out
 const MAX_LIGHTS_PER_MATERIAL = 6;   // sky, moon, palm fire, thrown ember, lamp
 const STEP = 1 / 60;          // fixed simulation step
 const MAX_STEPS = 4;          // clamp catch-up after a stall
@@ -43,6 +49,22 @@ const nextFrame = () => new Promise<void>(r => setTimeout(r, 16));
  * story -> animation -> flame, phase geometry, anomalies, creatures, wind, light ->
  * camera -> atmosphere -> post -> audio. Rendering happens once per display frame.
  */
+/**
+ * Nearest place within 3 m where the protagonist can stand in `reality`: rings of
+ * 0.25 m, 24 directions each. Null if none (the caller then leaves things as they are).
+ */
+export function nearestFree(grid: WalkGrid, at: Vector3, reality: RealityId): Vector3 | null {
+  const p = new Vector3();
+  for (let r = 0.25; r <= 3.0001; r += 0.25) {
+    for (let k = 0; k < 24; k++) {
+      const a = (k / 24) * Math.PI * 2;
+      p.set(at.x + Math.cos(a) * r, at.y, at.z + Math.sin(a) * r);
+      if (grid.canStand(p, reality)) return p.clone();
+    }
+  }
+  return null;
+}
+
 export class Game {
   public state: GameState = 'loading';
   private canvas: HTMLCanvasElement;
@@ -69,6 +91,7 @@ export class Game {
   private acc = 0;
   private recover = { active: false, t: 0, target: new Vector3(), segment: 0, stumble: 0, reason: 'fall' as 'fall' | 'caught' };
   private ending = { t: 0, cut: false };
+  private push = { active: false, t: 0, from: new Vector3(), to: new Vector3() };
   private readonly palmPos = new Vector3();
   private readonly clothWind = new Vector3();
   private readonly fireUV = new Vector2(0.5, 0.5);
@@ -138,6 +161,14 @@ export class Game {
     this.post = new PostFX(this.scene, this.cam.camera);
     this.cam.setOccluders(this.world.occluders());
     this.atmos.setShadowCasters([...this.world.shadowCasters(), ...this.player.meshes]);
+    // The authored skinned body; the procedural figure stays if it cannot be loaded
+    try {
+      const body = await SkinnedBody.load(this.scene, protagonistUrl, this.player.root);
+      this.player.attachSkinned(body, this.world.mats);
+      this.atmos.addShadowCasters(body.meshes);
+    } catch (e) {
+      console.warn('Skinned protagonist unavailable; using the procedural figure.', e);
+    }
     this.beingCtx = {
       dt: 0, time: 0, player: this.ctrl.pos, playerSpeed: 0, fireOn: false, firePos: this.fire.position,
       reality: 'normal', voidAmt: 0, derangedAmt: 0, transitioning: false, camera: this.cam.camera, playerHeight: 0
@@ -200,6 +231,8 @@ export class Game {
     this.fire.onDismiss = () => this.audio.dismiss();
     this.fire.onGuttered = () => this.chapter.onGuttered();
     this.fire.onRefusedSummon = () => this.audio.refused();
+    this.fire.contact = (p, r) => this.flameContact(p, r);
+    this.fire.onImpact = (_at, hit, spec) => { if (hit === 'water') this.audio.hiss(spec.charge); };
     this.fire.onPulse = (p) => {
       this.audio.pulse(p.strength);
       this.cam.addShake(0.04 + p.strength * 0.05);
@@ -212,18 +245,25 @@ export class Game {
     w.hound.onCatch = () => this.beginRecovery(new Vector3(HOUND.checkpoint.x, GROUND_Y, HOUND.checkpoint.z), 0, 'caught');
 
     this.phase.canStandIn = (r: RealityId) => this.ctrl.onWall ? r === 'deranged' : this.world.grid.canStand(this.ctrl.pos, r);
-    this.phase.mustHold = () => this.ctrl.onWall;
+    // Leaving is refused (the phase holds) on a face, and while matter that exists in the
+    // reality being returned to would close around the protagonist. Leaving over empty
+    // ground (the Void spans) is still allowed: that is a fall with its own recovery.
+    this.phase.mustHold = () => this.ctrl.onWall || this.world.grid.insideActiveObstacle(this.ctrl.pos, 'normal') !== null;
     // The world shudders as a phase begins (and a little as it lets go)
     this.phase.onEnterStart = () => { this.audio.phaseEnter(); this.post.triggerRing(this.fireUV, 1); this.cam.addShake(0.22); };
     this.phase.onLeaveStart = () => { this.audio.phaseExit(); this.post.triggerRing(this.fireUV, 0.55); this.cam.addShake(0.1); };
     this.phase.onRefused = () => { this.audio.refused(); this.chapter.onRefused(this.fire.isPresent); };
-    this.phase.onRejected = (enter) => { this.audio.strain(); this.chapter.onRejected(enter, this.ctrl.onWall); };
+    this.phase.onRejected = (enter) => {
+      this.audio.strain();
+      this.chapter.onRejected(enter, this.ctrl.onWall, !enter && !this.ctrl.onWall);
+    };
 
     this.ctrl.onJump = () => this.audio.hop();
     this.ctrl.onVault = () => this.audio.hop();
     this.ctrl.onLand = (impact) => { this.audio.land(impact); if (impact > 0.6) this.cam.addShake(0.05); };
     this.ctrl.onEnterWall = () => { this.audio.gravityShift(); this.chapter.onWallEnter(); };
     this.ctrl.onLeaveWall = () => { this.audio.gravityShift(); this.chapter.onWallLeave(); };
+    this.player.groundAt = (x, z) => this.world.grid.heightAt(x, z);
     this.player.onFootstep = (_foot, intensity) => {
       const p = this.ctrl.pos;
       const s = this.ctrl.onWall ? Surface.STONE : this.world.grid.surfaceAt(p.x, p.z);
@@ -342,6 +382,7 @@ export class Game {
     this.recover.active = false;
     this.recover.stumble = 0;
     this.ending.t = 0; this.ending.cut = false;
+    this.push.active = false;
     this.debris.clear();
     this.tapCharger.reset();
     this.touch.releaseAll();
@@ -492,6 +533,8 @@ export class Game {
     this.fire.phaseTint = this.phase.progress;
     this.fire.feet.copyFrom(c.pos);
     this.fire.surfaceUp.copyFrom(c.up);
+    this.fire.aim.set(this.player.forward.x, 0, this.player.forward.z).normalize();
+    this.fire.voidAmt = this.voidAmt; this.fire.derangedAmt = this.derangedAmt;
     this.ctx.wind!.copyFrom(this.clothWind);
     this.fire.update(dt, this.palmPos, this.ctx);
     this.debris.update(this.ctx);
@@ -521,6 +564,7 @@ export class Game {
       if (this.houndStepTimer <= 0) { this.houndStepTimer = 0.18; this.audio.houndRun(this.panOf(w.hound.pos)); }
     }
     w.displaced.update(dt, this.voidAmt, this.derangedAmt);
+    w.props.barrierTrace.alpha = 0.05 + this.voidAmt * 0.5;
     w.cutting.update(dt, this.voidAmt);
     w.structures.wallFootprints.visibility = this.derangedAmt * 0.95;
     w.structures.wallFootprints.isVisible = this.derangedAmt > 0.02;
@@ -549,6 +593,10 @@ export class Game {
     RealityFX.fireRadius = this.fire.isPresent ? (3.2 + this.fire.charge * 2.5) * (0.5 + 0.5 * this.fire.fuel) : 0;
     RealityFX.windX = this.wind.dirX; RealityFX.windZ = this.wind.dirZ;
     RealityFX.windStrength = this.wind.strength; RealityFX.gust = this.wind.gust;
+    RealityFX.hold.copyFrom(this.fire.position);
+    RealityFX.holdRadius = this.fire.isPresent ? (2.6 + 2.4 * this.fire.strength) * (0.45 + 0.55 * this.fire.fuel) * (1 - this.voidAmt * 0.4) : 0;
+    RealityFX.infl.copyFrom(this.fire.influence.pos);
+    RealityFX.inflRadius = this.fire.influence.radius * this.fire.influence.strength;
     const vx = this.wind.vortex;
     RealityFX.vortexX = vx.x; RealityFX.vortexZ = vx.z; RealityFX.vortexRadius = vx.radius; RealityFX.vortexStrength = vx.strength;
 
@@ -599,8 +647,34 @@ export class Game {
     const focus = this.world.vista.focusPoint(new Vector3());
     // Turn to face west, stand back, drop almost level and lift the framing: the camera
     // looks up past the protagonist at the landmass
-    this.cam.playShot({ focus, focusWeight: 0.17, distance: 12, pitch: 0.08, yawOffset: 0.3,
-      inTime: 4.5, hold: 4.5, outTime: 3.5, releaseOnMove: true });
+    // Framed (measured: projected island silhouette and protagonist) so the whole island fits
+    // in the upper left at 4:3 and wider, with the protagonist in the lower right third
+    this.cam.playShot({ focus, focusWeight: 0.1, distance: 12, pitch: 0.06, yawOffset: 0.55, fov: 0.75,
+      inTime: 4.5, hold: 4.5, outTime: 3.5, releaseOnMove: false, releaseBeyondZ: REVEAL_RELEASE_Z });
+  }
+
+  /**
+   * What a thrown flame at p (radius r) is touching, in the current reality: the
+   * stream, the visible ground, solid obstacles (houses, the fallen tree, fence posts;
+   * low ones only below their top), the two wall faces, the Hound, a Drifter.
+   */
+  private flameContact(p: Vector3, r: number): FlameContact {
+    const w = this.world, grid = w.grid, cl = CUTTING.cleft;
+    if (p.z > cl.z0 && p.z < cl.z1 && p.x > cl.x0 && p.x < cl.x1 && p.y < CUTTING.stream.y + r) return 'water';
+    const ground = w.terrain.heightAt(p.x, p.z);
+    if (ground > -100 && p.y - r < ground) return 'ground';
+    if (p.y < GROUND_Y - 8) return 'ground';                    // gone into the gap or the fog below
+    const g = ground > -100 ? ground : GROUND_Y;
+    const o = grid.insideActiveObstacle(p, this.phase.reality);
+    if (o && (o.low === undefined ? p.y < g + 4 : p.y < g + o.low)) return 'solid';
+    for (const sf of GRAVITY_SURFACES) {
+      const fx = sf.origin[0];
+      if (p.x - r < fx && p.x > fx - 1 && p.z > sf.u0 && p.z < sf.u1 && p.y < GROUND_Y + sf.height) return 'solid';
+    }
+    const hp = w.hound.pos;
+    if (Math.hypot(p.x - hp.x, p.z - hp.z) < r + 0.55 && p.y < hp.y + 1.2) return 'creature';
+    if (w.drifters.near(p, r + 0.35)) return 'creature';
+    return 'none';
   }
 
   // Losing the ground underfoot, the fallen tree returning around the protagonist,
@@ -643,15 +717,29 @@ export class Game {
       this.beginRecovery(this.tmp.set(rp.x, grid.heightAt(rp.x, rp.z), rp.z), seg, 'fall');
       return;
     }
+    // Only reached when the phase was forced to end (the flame went out) inside matter:
+    // the returning matter pushes the protagonist out to the nearest free place, as a
+    // short visible slide. Never a jump to the far side.
+    if (this.push.active) {
+      this.push.t = Math.min(1, this.push.t + dt / PUSH_TIME);
+      const e = 1 - (1 - this.push.t) * (1 - this.push.t);
+      Vector3.LerpToRef(this.push.from, this.push.to, e, c.pos);
+      this.player.place(c.pos, 0);
+      if (this.push.t >= 1) { this.push.active = false; this.recover.stumble = 0.6; }
+      return;
+    }
     if (grid.insideActiveObstacle(c.pos, reality)) {
-      // The tree came back around the protagonist: out on the side they were nearest
-      const zc = (BARRIER.z0 + BARRIER.z1) / 2;
-      const outZ = c.pos.z >= zc ? BARRIER.z1 + 0.5 : BARRIER.z0 - 0.5;
-      c.teleport(this.tmp.set(c.pos.x, c.pos.y, outZ));
-      this.recover.stumble = 0.8;
-      this.cam.addShake(0.1);
-      this.audio.fall();
-      this.chapter.onBarrierShove();
+      const out = nearestFree(grid, c.pos, reality);
+      if (out) {
+        this.push.active = true; this.push.t = 0;
+        this.push.from.copyFrom(c.pos); this.push.to.copyFrom(out);
+        this.push.to.y = grid.heightAt(out.x, out.z);
+        c.vel.setAll(0);
+        this.recover.stumble = PUSH_TIME + 0.2;
+        this.cam.addShake(0.1);
+        this.audio.fall();
+        this.chapter.onBarrierShove();
+      }
     }
   }
 

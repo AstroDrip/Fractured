@@ -340,6 +340,13 @@ export class AudioSystem {
     this.tone('sine', 440, 280, 0.02, 0.02, 0.45);
   }
 
+  /** A thrown flame meeting water: a short hiss, no thump. */
+  public hiss(strength: number): void {
+    if (!this.ctx) return;
+    this.burst('highpass', 3400, 0.5, 0.06 * (0.4 + strength), 0.55, 0, 0.3);
+    this.burst('bandpass', 1900, 2.5, 0.025 * (0.4 + strength), 0.35, 0, 0.2);
+  }
+
   public pulse(strength: number): void {
     if (!this.ctx) return;
     this.tone('sine', 72, 40, 0.14 * (0.5 + strength), 0.01, 0.8, 0, 0.6);

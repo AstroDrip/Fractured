@@ -1,5 +1,6 @@
 import {
   Scene, Mesh, MeshBuilder, Vector3, Quaternion, Color3, PointLight, LinesMesh
+, StandardMaterial
 } from '@babylonjs/core';
 import { mulberry32, smoothstep } from '../core/rng';
 import { ThinBatch } from './ThinBatch';
@@ -7,7 +8,7 @@ import { Materials } from './Materials';
 import { Terrain } from './Terrain';
 import { WalkGrid } from './WalkGrid';
 import {
-  polePositions, GROUNDED_CABLE_POLE_Z, SIGNS, HUTS, TREES, FENCE_RUNS, BOOT, LAMP, PUDDLES,
+  polePositions, GROUNDED_CABLE_POLE_Z, SIGNS, HUTS, TREES, FENCE_RUNS, FENCE_POCKET, BOOT, LAMP, PUDDLES,
   FOOTPRINTS_TO_EDGE, FOOTPRINTS_RETURNING, BARRIER, GAP_NEAR_Z, GAP_FAR_Z,
   WORLD_END_Z, GROUND_Y, BED_Y, walkDistance, inGap
 } from './layout';
@@ -324,6 +325,22 @@ export class Props {
     this.meshes.push(grass.commit(), stones.commit());
   }
 
+  /** The hollow beyond the broken fence: an open suitcase packed with earth. */
+  private buildSuitcase(): void {
+    const p = FENCE_POCKET, g = this.groundAt(p.x, p.z);
+    const base = MeshBuilder.CreateBox('suitcase', { width: 0.7, height: 0.2, depth: 0.45 }, this.scene);
+    base.material = this.mats.shoes;
+    base.position.set(p.x, g + 0.1, p.z);
+    base.rotation.y = 0.5;
+    const soil = MeshBuilder.CreateBox('suitcaseSoil', { width: 0.64, height: 0.06, depth: 0.39 }, this.scene);
+    soil.material = this.mats.ground;
+    soil.parent = base; soil.position.y = 0.1;
+    const lid = MeshBuilder.CreateBox('suitcaseLid', { width: 0.7, height: 0.45, depth: 0.06 }, this.scene);
+    lid.material = this.mats.shoes;
+    lid.parent = base; lid.position.set(0, 0.26, -0.25); lid.rotation.x = -0.25;
+    for (const m of [base, soil, lid]) { m.isPickable = false; this.meshes.push(m); this.shadowCasters.push(m); }
+  }
+
   private buildFences(): void {
     const posts = new ThinBatch(MeshBuilder.CreateBox('fencePost', { size: 1 }, this.scene));
     posts.mesh.material = this.mats.timber;
@@ -352,6 +369,7 @@ export class Props {
     }
     this.meshes.push(posts.commit());
     this.shadowCasters.push(posts.mesh);
+    this.buildSuitcase();
   }
 
   private buildBoot(): void {
@@ -546,5 +564,77 @@ export class Props {
     this.barrierMeshes.push(tree, fm);
     this.meshes.push(tree, fm);
     this.shadowCasters.push(tree, fm);
+    this.buildFracture(zc);
   }
+
+  /**
+   * The fracture at the fallen tree: the line and the tree occupy the same place and do
+   * not agree. The rails lift out of the ballast, run into the trunk and leave it at
+   * another angle; sleepers stand on end around it; roots come up out of the track bed
+   * into a tree that has already fallen. All of it is matter (fades in Void, keeps its
+   * shadow); a pale trace of the rails and trunk stays where the matter was.
+   */
+  private buildFracture(zc: number): void {
+    const parts: Mesh[] = [];
+    const tube = (name: string, pts: Vector3[], r0: number, r1: number, mat: StandardMaterial) => {
+      const t = MeshBuilder.CreateTube(name, {
+        path: pts, tessellation: 7, cap: Mesh.CAP_ALL,
+        radiusFunction: (i: number) => r0 + (r1 - r0) * (i / Math.max(1, pts.length - 1))
+      }, this.scene);
+      t.material = mat;
+      parts.push(t);
+      return t;
+    };
+    const railPath = (x: number, enter: number, leaveYaw: number): Vector3[] => {
+      const pts: Vector3[] = [];
+      // Up out of the bed toward the trunk...
+      for (let i = 0; i <= 6; i++) {
+        const t = i / 6;
+        pts.push(new Vector3(x + t * 0.15, BED_Y + 0.08 + Math.pow(t, 1.6) * enter, zc - 2.6 + t * 2.6));
+      }
+      // ...and out of the other side, turned, as if it had been laid somewhere else
+      for (let i = 1; i <= 5; i++) {
+        const t = i / 5;
+        pts.push(new Vector3(x + 0.15 + Math.sin(leaveYaw) * t * 2.4, BED_Y + 0.08 + enter + t * 0.35 - t * t * 0.9, zc + Math.cos(leaveYaw) * t * 2.4));
+      }
+      return pts;
+    };
+    const railMat = this.mats.rust;
+    tube('fractureRailL', railPath(-0.72, 0.95, 0.55), 0.045, 0.04, railMat);
+    tube('fractureRailR', railPath(0.72, 0.75, -0.75), 0.045, 0.04, railMat);
+    // Sleepers on end, fanned round the trunk
+    for (let i = 0; i < 7; i++) {
+      const s = MeshBuilder.CreateBox('fractureSleeper', { width: 2.1, height: 0.13, depth: 0.25 }, this.scene);
+      const a = (i / 6 - 0.5) * 2.4;
+      s.position.set(-1.6 + i * 0.55, BED_Y + 0.55 + (i % 2) * 0.25, zc + Math.sin(a) * 0.7 - 0.4);
+      s.rotation.set(0.25 * Math.sin(i * 1.7), a * 0.6, Math.PI / 2 - 0.35 + (i % 3) * 0.25);
+      s.material = this.mats.timber;
+      parts.push(s);
+    }
+    // Roots: out of the ballast, up into the trunk lying across them
+    for (let i = 0; i < 6; i++) {
+      const bx = -2.2 + i * 0.85 + (this.rnd() - 0.5) * 0.3, bz = zc - 1.1 - this.rnd() * 0.6;
+      const pts: Vector3[] = [];
+      for (let k = 0; k <= 5; k++) {
+        const t = k / 5;
+        pts.push(new Vector3(bx + Math.sin(t * 2.2 + i) * 0.25, BED_Y - 0.05 + t * (1.0 + this.rnd() * 0.4), bz + t * 1.0));
+      }
+      tube('fractureRoot', pts, 0.09, 0.025, this.mats.bark);
+    }
+    const merged = Mesh.MergeMeshes(parts, true, true, undefined, false, true)!;
+    merged.name = 'fracture';
+    merged.isPickable = false;
+    this.barrierMeshes.push(merged);
+    this.meshes.push(merged);
+    this.shadowCasters.push(merged);
+    // The trace: what is left of the rails and the trunk where the matter goes
+    const lines = [railPath(-0.72, 0.95, 0.55), railPath(0.72, 0.75, -0.75),
+      [new Vector3(-6.2, BED_Y + 0.6, zc - 0.3), new Vector3(-2, BED_Y + 0.85, zc), new Vector3(2.2, BED_Y + 0.95, zc + 0.25), new Vector3(5.2, BED_Y + 0.7, zc + 0.5)]];
+    this.barrierTrace = MeshBuilder.CreateLineSystem('fractureTrace', { lines }, this.scene);
+    this.barrierTrace.color = new Color3(0.72, 0.78, 0.84);
+    this.barrierTrace.alpha = 0.05;
+    this.barrierTrace.isPickable = false;
+  }
+  /** Faint outline of the fracture; strongest when the matter has gone (Void). */
+  public barrierTrace!: LinesMesh;
 }

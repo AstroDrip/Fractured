@@ -2,17 +2,18 @@
 
 Coordinates are along the railway (Z, metres). Walk 2.8 m/s, run 4.4, slow 1.35.
 Autopilot completion, measured in fixed 1/60 s steps: **130 s** on the straight line,
-**186 s** taking every detour (cutting, village + Void path, facade). A first playthrough has
+**185 s** taking every detour (hollow, cutting, village + Void path, facade; measured pass 6). A first playthrough has
 not been measured; it remains below the 15–20 minute target.
 
 | # | Beat | Where | What happens | Player tools | Exit / recovery |
 | --- | --- | --- | --- | --- | --- |
 | 1 | Arrival | start clearing (−25.5, −5.5) → path → line (z 17) | close, low intro camera opens out; fences, the boot (examine); the settlement to the left, one lit window | walk, `[Shift]` run hint at z 18 | reach the rails |
+| 1b | The hollow (optional) | through the broken fence bays near the start | an open suitcase packed with earth (examine) | walk, examine | back through the gap |
 | 2 | The light | vantage z 19–30 | camera lowers and turns down the line; the moving light sits far ahead among the trees; its tone is audible first | — | walk on |
 | 3 | The fire | z 44 | "My palm is warm." `[F]`; "It does not burn me."; `[R]` gather hint | flame, pulse, ember | — |
 | 3b | The cutting (optional) | ramp off the line at z 40, back at z 67 | a shelf under a cliff; rails running into the rock; a fallen trunk over a stream (slow, arms out); the stream is heard before it is seen; the Watcher can stand on the cliff top | walk (narrow footing) | back to the line at z 67 |
 | 4 | First obstacle | fallen pole z 86 | "A pole came down across the line." `[Space]` | vault | land at z 86.8 |
-| 5 | Monumental reveal | z 98 | real dolly back and around; the floating landmass, inverted village, sideways river; protagonist small in the foreground; walking away hands control back early | — | shot ends ~12 s |
+| 5 | Monumental reveal | z 98 | real dolly back and around; the floating landmass over the protagonist (lower right third); the shot holds while you walk and hands back at z 117, or after 12.5 s standing still | — | release before the sleeper pile |
 | 6 | Huts, poles | z 72–147 | the same hut twice; poles compress; the grounded cable; sleeper pile vault at z 121.6; the Watcher keeps ahead at the tree line | vault, examine | — |
 | 6b | The displaced village (optional) | paths off the line at z 126 and z 146 | the same house three times (one door turned away, one upside down over the square, one out in the fog); "The same house. Again. And again."; a vortex can cross the square | walk, examine by looking | back to the line at z 146 |
 | 6c | The Void path (alternative to 7) | from the square's north corner | outline of a path over a ravine is faintly visible; in Void the deck resolves and one house disappears, leaving its shadow | phase (Void), fuel | rejoins the line at z 157 past the fallen tree; releasing on the span → recovery at the square |
